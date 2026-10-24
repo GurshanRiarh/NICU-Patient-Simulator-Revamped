@@ -30,6 +30,17 @@ function fmtTime(iso) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function fmtShiftTime(data, minute) {
+  if (!data.times || !data.times.length) return "--:--";
+  const start = new Date(data.times[0]);
+  if (Number.isNaN(start.getTime())) return "--:--";
+  const offset = Number(minute) || 0;
+  return new Date(start.getTime() + offset * 60000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function showToast(message) {
   const toast = $("toast");
   toast.textContent = message;
@@ -248,9 +259,8 @@ function renderTimeline(data) {
     if (e.type.includes("brady")) cls = "brady";
     else if (e.type.includes("desat")) cls = "desat";
     else if (e.type === "apnea") cls = "apnea";
-    const minutes = Math.round(e.start_minute);
     return `<div class="event-row">
-      <span class="event-time">${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}</span>
+      <span class="event-time">${fmtShiftTime(data, e.start_minute)}</span>
       <span class="event-dot ${cls}"></span>
       <span class="event-label">${e.label || e.type}</span>
       <span class="event-duration">${e.duration_minutes.toFixed(0)} min</span>
