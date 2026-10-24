@@ -398,6 +398,6 @@ Datasets:
 
 ## Contact
 
-Gurshan Riarh — `Gurshanriarh@cmail.carleton.ca`
+Gurshan Riarh — `Gurshan01@gmail.com`
 
 Repository: <https://github.com/GurshanRiarh/NICU-Patient-Simulator-Revamped>
