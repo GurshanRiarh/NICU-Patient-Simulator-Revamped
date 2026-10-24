@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Raw and intermediate data (licensed / large)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+!data/processed/norm_stats.json
+data/legacy/*.zip
+
+# Model checkpoints (final release checkpoint is force-added)
+models/*.pt
+models/*.pth
+models/*.ckpt
+models/runs/
+
+# Generated simulation output
+outputs/
+results/generated/
+results/tmp/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

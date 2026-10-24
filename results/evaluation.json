@@ -1,0 +1,199 @@
+{
+  "model": {
+    "model": "NeoFlow",
+    "checkpoint": "/home/zeus/Zeus/AI_Stuff/Patient_Simulator_Revamped/models/neosim_flow.pt",
+    "params": 4278339,
+    "val_loss": 0.47509294169580124,
+    "epoch": 29,
+    "gpu": "NVIDIA GeForce RTX 3080 Ti"
+  },
+  "n_per_dataset": 100,
+  "premo": {
+    "real": "premo_test",
+    "n_real": 6171,
+    "n_synth": 100,
+    "hr": {
+      "distribution": {
+        "real_mean": 157.88752300240122,
+        "synth_mean": 157.82033333333334,
+        "mean_diff": 0.06718966906788637,
+        "real_std": 14.965214526194435,
+        "synth_std": 22.05486461582166,
+        "std_diff": 7.089650089627225,
+        "real_q01": 120.6069140625,
+        "synth_q01": 106.0,
+        "real_q99": 193.6271209716797,
+        "synth_q99": 210.0,
+        "ks": 0.11003924315776803,
+        "ks_p": 5.562614021239178e-125,
+        "wasserstein": 5.790480857611282
+      },
+      "autocorrelation": {
+        "real": {
+          "acf_1": 0.8540707207211266,
+          "acf_5": 0.3847353961360331,
+          "acf_15": 0.1076817381990349
+        },
+        "synth": {
+          "acf_1": 0.8734705391161683,
+          "acf_5": 0.3430435524731086,
+          "acf_15": 0.030809664082735305
+        }
+      }
+    },
+    "spo2": {
+      "distribution": {
+        "real_mean": 94.9619935579474,
+        "synth_mean": 95.7115,
+        "mean_diff": 0.7495064420526063,
+        "real_std": 4.727085607274166,
+        "synth_std": 4.570824260094307,
+        "std_diff": 0.15626134717985884,
+        "real_q01": 78.23332977294922,
+        "synth_q01": 81.0,
+        "real_q99": 100.0,
+        "synth_q99": 100.0,
+        "ks": 0.15856748554066424,
+        "ks_p": 8.286154427733012e-260,
+        "wasserstein": 0.7925440995090434
+      },
+      "autocorrelation": {
+        "real": {
+          "acf_1": 0.8093604902370986,
+          "acf_5": 0.2692742060041944,
+          "acf_15": 0.05530863635755455
+        },
+        "synth": {
+          "acf_1": 0.7947340412483612,
+          "acf_5": 0.20983913401230858,
+          "acf_15": 0.0014474673430818646
+        }
+      }
+    },
+    "hr_spo2_cross_correlation": {
+      "real_peak_corr": -0.08701885554536774,
+      "synth_peak_corr": -0.07641613967716694,
+      "real_peak_lag": 0.75,
+      "synth_peak_lag": -0.71
+    },
+    "bradycardia": {
+      "real": {
+        "fraction": 0.00164622079378413,
+        "minutes_per_hour": 0.0987732476270478
+      },
+      "synth": {
+        "fraction": 0.0055,
+        "minutes_per_hour": 0.32999999999999996
+      }
+    },
+    "desaturation": {
+      "real": {
+        "fraction": 0.0345739285665986,
+        "minutes_per_hour": 2.074435713995916
+      },
+      "synth": {
+        "fraction": 0.03766666666666667,
+        "minutes_per_hour": 2.2600000000000002
+      }
+    },
+    "discriminative_auc": {
+      "auc": 0.9034000000000001,
+      "n": 100.0
+    },
+    "distance_to_closest": {
+      "dcr_mean": 0.8951734246922496,
+      "real_dcr_mean": 0.8961763398358271,
+      "dcr_p05": 0.5445643108403999,
+      "ratio": 0.998880895311562
+    }
+  },
+  "pics": {
+    "real": "pics_test",
+    "n_real": 64,
+    "n_synth": 100,
+    "hr": {
+      "distribution": {
+        "real_mean": 155.78509426116943,
+        "synth_mean": 150.90183333333334,
+        "mean_diff": 4.883260927836091,
+        "real_std": 11.054708669049928,
+        "synth_std": 17.26576661022872,
+        "std_diff": 6.211057941178792,
+        "real_q01": 134.52914428710938,
+        "synth_q01": 121.0,
+        "real_q99": 182.9268341064453,
+        "synth_q99": 198.0,
+        "ks": 0.269515625,
+        "ks_p": 6.40447903097246e-301,
+        "wasserstein": 6.6237457798322055
+      },
+      "autocorrelation": {
+        "real": {
+          "acf_1": 0.825481039921042,
+          "acf_5": 0.38668850065836696,
+          "acf_15": 0.11356655022546064
+        },
+        "synth": {
+          "acf_1": 0.8566289768414219,
+          "acf_5": 0.4121673970703758,
+          "acf_15": 0.07942989311964686
+        }
+      }
+    },
+    "rr": {
+      "distribution": {
+        "real_mean": 40.91350142043084,
+        "synth_mean": 43.748416666666664,
+        "mean_diff": 2.8349152462358234,
+        "real_std": 5.203963408300868,
+        "synth_std": 6.288133466542799,
+        "std_diff": 1.0841700582419316,
+        "real_q01": 30.0,
+        "synth_q01": 25.0,
+        "real_q99": 54.0,
+        "synth_q99": 57.0,
+        "ks": 0.24586979166666667,
+        "ks_p": 8.541670348445623e-250,
+        "wasserstein": 3.0446339962358278
+      },
+      "autocorrelation": {
+        "real": {
+          "acf_1": 0.6523460333003305,
+          "acf_5": 0.1274449294884369,
+          "acf_15": -0.00213595814445295
+        },
+        "synth": {
+          "acf_1": 0.8314724082098794,
+          "acf_5": 0.24164688200191176,
+          "acf_15": 0.029492281608576688
+        }
+      }
+    },
+    "hr_rr_cross_correlation": {
+      "real_peak_corr": -0.3807266834191978,
+      "synth_peak_corr": -0.08426540672779083,
+      "real_peak_lag": -0.1875,
+      "synth_peak_lag": -1.3
+    },
+    "bradycardia": {
+      "real": {
+        "fraction": 0.0,
+        "minutes_per_hour": 0.0
+      },
+      "synth": {
+        "fraction": 0.0014166666666666668,
+        "minutes_per_hour": 0.085
+      }
+    },
+    "discriminative_auc": {
+      "auc": 0.85107421875,
+      "n": 64.0
+    },
+    "distance_to_closest": {
+      "dcr_mean": 1.043685032723808,
+      "real_dcr_mean": 1.0451674934338033,
+      "dcr_p05": 0.6152884415615077,
+      "ratio": 0.9985816046525473
+    }
+  }
+}

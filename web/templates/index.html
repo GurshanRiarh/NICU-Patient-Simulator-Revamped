@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeoSim 2.0 — Generative NICU Patient Simulator</title>
+  <meta name="description" content="One conditional flow-matching model. Every neonatal vital sign. A controllable NICU digital twin.">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%230b1526'/><path d='M12 54h20l8-22 12 44 9-30 6 8h21' fill='none' stroke='%2357e3c2' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M4 26h9l4-11 6 23 5-16 4 4h12" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">NeoSim<span>2.0</span></div>
+        <div class="brand-sub">Neonatal digital twin</div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-label">Quick profiles</div>
+      <div class="preset-grid" id="presetGrid"></div>
+    </div>
+
+    <form id="simForm" class="side-section form">
+      <div class="side-label">Patient profile</div>
+
+      <label class="field">
+        <span>Patient name</span>
+        <input id="name" name="name" value="Baby Doe" autocomplete="off">
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Gestational age <b id="gaValue">30.0</b>w</span>
+          <input id="ga" name="gestational_age_weeks" type="range" min="22" max="42" step="0.5" value="30">
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Birth weight <b id="weightValue">1250</b>g</span>
+          <input id="weight" name="birth_weight_g" type="range" min="400" max="5000" step="50" value="1250">
+        </label>
+      </div>
+
+      <div class="field-row two">
+        <label class="field">
+          <span>Postnatal age</span>
+          <div class="input-suffix"><input id="age" name="postnatal_age_days" type="number" min="0" max="365" value="14"><i>days</i></div>
+        </label>
+        <label class="field">
+          <span>Sex</span>
+          <select id="sex" name="sex">
+            <option>Female</option>
+            <option>Male</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Clinical condition</span>
+        <select id="condition" name="condition">
+          <option value="stable_preterm">Stable preterm</option>
+          <option value="bradycardia">Recurrent bradycardia</option>
+          <option value="tachycardia">Tachycardia</option>
+          <option value="apnea_of_prematurity">Apnoea of prematurity</option>
+          <option value="rds">Respiratory distress syndrome</option>
+          <option value="sepsis">Late-onset sepsis</option>
+          <option value="nec">Necrotising enterocolitis</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Severity <b id="severityValue">0.35</b></span>
+        <input id="severity" name="severity" type="range" min="0" max="1" step="0.05" value="0.35">
+      </label>
+
+      <div class="field-row two">
+        <label class="field">
+          <span>Shift length</span>
+          <select id="hours" name="shift_hours">
+            <option value="4">4 hours</option>
+            <option value="8" selected>8 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Resolution</span>
+          <select id="interval" name="interval_minutes">
+            <option value="1">1 min</option>
+            <option value="5" selected>5 min</option>
+            <option value="15">15 min</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="check-row">
+        <label class="check"><input id="care" type="checkbox" checked><span>Routine care events</span></label>
+        <label class="check"><input id="closed" type="checkbox" checked><span>Closed-loop response</span></label>
+      </div>
+
+      <button class="primary" type="submit" id="generateBtn">
+        <span class="btn-icon"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor"/></svg></span>
+        Generate shift
+      </button>
+      <div class="seed-row"><span>Seed</span><input id="seed" type="number" min="0" placeholder="random"></div>
+    </form>
+
+    <div class="side-footer">
+      <span class="live-dot"></span>
+      <span id="modelStatus">Checking model…</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Simulation workspace</div>
+        <h1>Neonatal intensive care, generated.</h1>
+      </div>
+      <div class="top-actions">
+        <a class="ghost" href="https://github.com/GurshanRiarh/NICU-Patient-Simulator-Revamped" target="_blank" rel="noreferrer">GitHub</a>
+        <button class="ghost" id="exportJson">Export JSON</button>
+        <button class="ghost" id="exportCsv">Export CSV</button>
+      </div>
+    </header>
+
+    <section class="overview">
+      <article class="patient-card">
+        <div class="patient-top">
+          <div>
+            <div class="eyebrow">Current patient</div>
+            <h2 id="patientName">Baby Doe</h2>
+            <div class="patient-meta"><span id="patientId">SIM-0001</span><span class="dot-sep">·</span><span id="patientDemo">30w · 1.25 kg · day 14</span></div>
+          </div>
+          <span class="condition-chip" id="conditionChip">Stable preterm</span>
+        </div>
+        <div class="patient-foot">
+          <span><b id="cohortLabel">PreMo</b> cohort</span>
+          <span><b id="shiftLabel">8 h</b> shift</span>
+          <span><b id="modelLabel">NeoFlow</b> generator</span>
+        </div>
+      </article>
+
+      <div class="stats-grid">
+        <article class="stat">
+          <div class="stat-head"><span>Heart rate</span><i class="swatch pink"></i></div>
+          <div class="stat-value"><b id="statHr">—</b><small>bpm</small></div>
+          <div class="stat-sub" id="statHrSub">mean / range</div>
+        </article>
+        <article class="stat">
+          <div class="stat-head"><span>SpO₂</span><i class="swatch cyan"></i></div>
+          <div class="stat-value"><b id="statSpo2">—</b><small>%</small></div>
+          <div class="stat-sub" id="statSpo2Sub">mean / nadir</div>
+        </article>
+        <article class="stat">
+          <div class="stat-head"><span>Respiratory rate</span><i class="swatch blue"></i></div>
+          <div class="stat-value"><b id="statRr">—</b><small>/min</small></div>
+          <div class="stat-sub" id="statRrSub">mean rate</div>
+        </article>
+        <article class="stat">
+          <div class="stat-head"><span>Temperature</span><i class="swatch amber"></i></div>
+          <div class="stat-value"><b id="statTemp">—</b><small>°C</small></div>
+          <div class="stat-sub" id="statTempSub">thermoregulated</div>
+        </article>
+        <article class="stat">
+          <div class="stat-head"><span>Stability</span><i class="swatch violet"></i></div>
+          <div class="stat-value"><b id="statStability">—</b><small>/100</small></div>
+          <div class="stat-sub" id="statStabilitySub">mean score</div>
+        </article>
+        <article class="stat">
+          <div class="stat-head"><span>Interventions</span><i class="swatch green"></i></div>
+          <div class="stat-value"><b id="statInterventions">—</b><small>events</small></div>
+          <div class="stat-sub" id="statInterventionsSub">care timeline</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel chart-panel">
+      <header class="panel-head">
+        <div>
+          <div class="eyebrow">Continuous monitoring</div>
+          <h3>Vital-sign trajectory</h3>
+        </div>
+        <div class="legend">
+          <span><i class="swatch pink"></i>Heart rate</span>
+          <span><i class="swatch cyan"></i>SpO₂</span>
+          <span><i class="swatch blue"></i>Resp. rate</span>
+          <span><i class="swatch amber"></i>Temperature</span>
+        </div>
+      </header>
+      <div id="vitalsChart" class="vitals-chart"></div>
+      <div class="chart-foot">
+        <span id="chartHint">Clinical event bands are overlaid on the traces.</span>
+        <span id="playStatus">Ready</span>
+      </div>
+    </section>
+
+    <div class="two-col">
+      <section class="panel">
+        <header class="panel-head">
+          <div><div class="eyebrow">Event stream</div><h3>Clinical timeline</h3></div>
+          <span class="pill" id="eventCount">0 events</span>
+        </header>
+        <div id="eventTimeline" class="event-timeline">
+          <div class="empty">Run a simulation to populate the timeline.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel-head">
+          <div><div class="eyebrow">Care delivery</div><h3>Interventions</h3></div>
+          <span class="pill" id="interventionCount">0 orders</span>
+        </header>
+        <div class="table-wrap">
+          <table class="interventions">
+            <thead><tr><th>Time</th><th>Intervention</th><th>Detail</th></tr></thead>
+            <tbody id="interventionBody"><tr><td colspan="3" class="empty-cell">No interventions yet.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel model-panel">
+      <div class="model-copy">
+        <div class="eyebrow">Under the hood</div>
+        <h3>One model. Every vital.</h3>
+        <p>NeoFlow is a conditional rectified-flow transformer that jointly generates heart rate, respiratory rate and oxygen saturation. A physiology layer adds thermoregulation, intervention responses and closed-loop care. The four separate GANs from the original simulator are gone.</p>
+        <div class="model-tags"><span>4.3M params</span><span>Rectified flow</span><span>CFG sampling</span><span>93.7k windows</span></div>
+      </div>
+      <div class="model-metrics">
+        <div><span>Training windows</span><b id="metricWindows">93,706</b></div>
+        <div><span>Channels</span><b>HR · RR · SpO₂</b></div>
+        <div><span>Sampling</span><b>35 Euler steps</b></div>
+        <div><span>Device</span><b id="metricDevice">RTX 3080 Ti</b></div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>NeoSim 2.0 · built for the NPSS neonatal summarisation pipeline</span>
+      <span>Data: PreMo (ODC-By) + PICS · <a href="https://doi.org/10.3390/info17030261" target="_blank" rel="noreferrer">Information 2026</a></span>
+    </footer>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
