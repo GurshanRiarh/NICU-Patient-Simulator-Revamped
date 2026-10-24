@@ -97,6 +97,42 @@ def arrow(ax, x1, y1, x2, y2, color=MUTED):
     )
 
 
+def _lagged_corr(
+    x: np.ndarray,
+    channel_a: int,
+    channel_b: int,
+    max_lag: int = 10,
+    max_windows: int = 300,
+) -> np.ndarray:
+    """Mean cross-correlation curve over windows, matching the metrics module."""
+    values = []
+    for row in x[:max_windows]:
+        a = row[:, channel_a] - row[:, channel_a].mean()
+        b = row[:, channel_b] - row[:, channel_b].mean()
+        denom = float(np.sqrt(np.dot(a, a) * np.dot(b, b)))
+        if denom <= 1e-12:
+            continue
+        curve = []
+        for lag in range(-max_lag, max_lag + 1):
+            if lag < 0:
+                value = float(np.dot(a[-lag:], b[:lag]) / denom)
+            elif lag > 0:
+                value = float(np.dot(a[:-lag], b[lag:]) / denom)
+            else:
+                value = float(np.dot(a, b) / denom)
+            curve.append(value)
+        values.append(curve)
+    return np.mean(values, axis=0) if values else np.full(2 * max_lag + 1, np.nan)
+
+
+def _hypoxic_picks(x: np.ndarray, mask: np.ndarray, n: int = 3) -> list[int]:
+    values = np.where(mask > 0, x, np.nan)
+    minima = np.nanmin(values, axis=1)
+    order = np.argsort(minima)
+    fractions = np.linspace(0.03, 0.30, n)
+    return [int(order[min(len(order) - 1, int(f * len(order)))]) for f in fractions]
+
+
 def architecture() -> None:
     fig, ax = plt.subplots(figsize=(11, 4.5))
     ax.set_xlim(0, 1)
@@ -114,7 +150,16 @@ def architecture() -> None:
     box(ax, 0.02, 0.48, 0.16, 0.3, "Public data", "PreMo · PICS · legacy", BLUE)
     box(ax, 0.23, 0.48, 0.17, 0.3, "Window builder", "120 min · 1-min grid\nmissing masks + events", CYAN)
     box(ax, 0.45, 0.48, 0.19, 0.3, "NeoFlow", "4.3M transformer\nrectified flow · CFG", PINK)
-    box(ax, 0.69, 0.48, 0.14, 0.3, "Physiology", "response kernels\nthermoregulation", AMBER)
+    box(
+        ax,
+        0.69,
+        0.48,
+        0.14,
+        0.3,
+        "Physiology",
+        "event coupling · kernels\nclosed-loop rescue",
+        AMBER,
+    )
     box(ax, 0.87, 0.48, 0.11, 0.3, "Outputs", "vitals + events\nJSON · CSV · FHIR", VIOLET)
 
     for x1, x2 in [(0.18, 0.23), (0.40, 0.45), (0.64, 0.69), (0.83, 0.87)]:
@@ -240,6 +285,118 @@ def distributions() -> None:
     plt.close(fig)
 
 
+def real_vs_synthetic() -> None:
+    synth_path = RESULTS_DIR / "synthetic_eval.npz"
+    real_path = PROCESSED_DIR / "premo_test.npz"
+    if not synth_path.exists() or not real_path.exists():
+        return
+    synth = np.load(synth_path)
+    real = np.load(real_path)
+    real_x = real["x"]
+    real_mask = real["mask"]
+    fake_x = synth["premo_x"]
+    real_picks = _hypoxic_picks(real_x[:, :, 2], real_mask[:, :, 2])
+    fake_picks = _hypoxic_picks(fake_x[:, :, 2], np.ones_like(fake_x[:, :, 2]))
+
+    fig, axes = plt.subplots(2, 3, figsize=(11, 5.2), sharex=True)
+    rows = [
+        ("Held-out real", real_x, real_mask, real_picks),
+        ("NeoFlow", fake_x, np.ones_like(fake_x), fake_picks),
+    ]
+    for row_index, (label, data, mask, picks) in enumerate(rows):
+        for col, index in enumerate(picks):
+            ax = axes[row_index, col]
+            t = np.arange(data.shape[1])
+            hr = np.where(mask[index, :, 0] > 0, data[index, :, 0], np.nan)
+            spo2 = np.where(mask[index, :, 2] > 0, data[index, :, 2], np.nan)
+            ax.plot(t, hr, color=PINK, linewidth=1.15)
+            ax.set_ylim(55, 220)
+            ax.set_title(f"{label} {col + 1}", fontsize=9)
+            _clean(ax)
+            if col == 0:
+                ax.set_ylabel("HR (bpm)", color=PINK)
+            ax2 = ax.twinx()
+            ax2.plot(t, spo2, color=CYAN, linewidth=1.0, alpha=0.95)
+            ax2.set_ylim(55, 101)
+            ax2.set_yticks([])
+            ax2.spines["top"].set_visible(False)
+            ax2.spines["right"].set_visible(False)
+            if col == 2:
+                ax2.set_ylabel("SpO$_2$ (%)", color=CYAN)
+            if row_index == 1:
+                ax.set_xlabel("minutes")
+    fig.suptitle(
+        "Held-out real windows versus condition-matched NeoFlow windows (HR pink, SpO$_2$ cyan)",
+        color=TEXT,
+        fontweight="bold",
+        y=1.0,
+    )
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / "real_vs_synthetic.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def interdependence() -> None:
+    synth_path = RESULTS_DIR / "synthetic_eval.npz"
+    if not synth_path.exists():
+        return
+    synth = np.load(synth_path)
+    real_premo = np.load(PROCESSED_DIR / "premo_test.npz")
+    real_pics = np.load(PROCESSED_DIR / "pics_test.npz")
+    lags = np.arange(-10, 11)
+    curves = [
+        ("PreMo: HR–SpO$_2$", _lagged_corr(real_premo["x"], 0, 2), _lagged_corr(synth["premo_x"], 0, 2)),
+        ("PICS: HR–RR", _lagged_corr(real_pics["x"], 0, 1), _lagged_corr(synth["pics_x"], 0, 1)),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 3.2))
+    for ax, (title, real_curve, fake_curve) in zip(axes[:2], curves, strict=False):
+        ax.plot(lags, real_curve, color=CYAN, linewidth=1.8, label="real")
+        ax.plot(lags, fake_curve, color=PINK, linewidth=1.8, label="NeoFlow")
+        ax.axhline(0, color=GRID, linewidth=0.8)
+        ax.axvline(0, color=GRID, linewidth=0.8, linestyle=":")
+        ax.set_xlabel("lag (minutes)")
+        ax.set_ylabel("mean cross-correlation")
+        ax.set_title(title)
+        ax.legend(frameon=False, labelcolor=TEXT, fontsize=7.5)
+        _clean(ax)
+
+    eval_path = RESULTS_DIR / "evaluation.json"
+    ax = axes[2]
+    if eval_path.exists():
+        data = json.loads(eval_path.read_text())["premo"]
+        real_rates = [
+            data["bradycardia"]["real"]["minutes_per_hour"],
+            data["desaturation"]["real"]["minutes_per_hour"],
+        ]
+        synth_rates = [
+            data["bradycardia"]["synth"]["minutes_per_hour"],
+            data["desaturation"]["synth"]["minutes_per_hour"],
+        ]
+        positions = np.arange(2)
+        width = 0.34
+        ax.bar(positions - width / 2, real_rates, width, color=CYAN, alpha=0.85, label="real")
+        ax.bar(positions + width / 2, synth_rates, width, color=PINK, alpha=0.85, label="NeoFlow")
+        for pos, value in zip(positions - width / 2, real_rates, strict=False):
+            ax.text(pos, value + 0.04, f"{value:.2f}", ha="center", fontsize=7, color=MUTED)
+        for pos, value in zip(positions + width / 2, synth_rates, strict=False):
+            ax.text(pos, value + 0.04, f"{value:.2f}", ha="center", fontsize=7, color=MUTED)
+        ax.set_xticks(positions, ["bradycardia", "desaturation"])
+        ax.set_ylabel("minutes / hour")
+        ax.set_title("PreMo event burden")
+        ax.legend(frameon=False, labelcolor=TEXT, fontsize=7.5)
+        _clean(ax)
+    fig.suptitle(
+        "Interdependence and event burden: real versus synthetic",
+        color=TEXT,
+        fontweight="bold",
+        y=1.04,
+    )
+    fig.tight_layout()
+    fig.savefig(FIGURES_DIR / "interdependence.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def regimes() -> None:
     sim = NeoSimulator(allow_fallback=True)
     regimes = [
@@ -325,6 +482,10 @@ def main() -> None:
     print("samples")
     distributions()
     print("distributions")
+    real_vs_synthetic()
+    print("real_vs_synthetic")
+    interdependence()
+    print("interdependence")
     regimes()
     print("regimes")
     evaluation_summary()

@@ -30,7 +30,7 @@ from neosim.config import (
     SimulationConfig,
 )
 from neosim.models.flow import load_checkpoint, sample
-from neosim.simulator.events import EventSchedule, EventScheduler
+from neosim.simulator.events import ClinicalEvent, EventSchedule, EventScheduler
 from neosim.simulator.physiology import (
     VitalArrays,
     add_monitor_noise,
@@ -48,6 +48,7 @@ INTERVENTION_MAP = {
     "family_visit": "family visitation",
     "suction": "suction",
     "pain": "pain management",
+    "closed_loop": "closed-loop care",
 }
 
 
@@ -200,6 +201,11 @@ class NeoSimulator:
         )
         apply_care_effects(arrays, schedule, config)
         enforce_events(arrays, schedule, config)
+        if config.closed_loop:
+            responses = self._closed_loop_responses(arrays, schedule, rng)
+            if responses:
+                apply_care_effects(arrays, schedule, config, events=responses)
+                event_matrix = schedule.matrix(total_minutes)
         add_monitor_noise(arrays, rng)
         arrays.hr = np.clip(np.round(arrays.hr), 40, 250)
         arrays.rr = np.clip(np.round(arrays.rr), 0, 120)
@@ -326,6 +332,87 @@ class NeoSimulator:
         # here we give it a plausible baseline.
         return out
 
+    @staticmethod
+    def _episodes(values: np.ndarray, threshold: float) -> list[tuple[int, int]]:
+        mask = values < threshold
+        if not mask.any():
+            return []
+        padded = np.concatenate(([False], mask, [False]))
+        starts = np.flatnonzero(~padded[:-1] & padded[1:])
+        ends = np.flatnonzero(padded[:-1] & ~padded[1:])
+        return [(int(start), int(end)) for start, end in zip(starts, ends, strict=False)]
+
+    def _closed_loop_responses(
+        self,
+        arrays: VitalArrays,
+        schedule: EventSchedule,
+        rng: np.random.Generator,
+    ) -> list[ClinicalEvent]:
+        """Respond to the generated traces rather than to scheduled labels.
+
+        The controller sees the simulated monitor values, detects episodes, and
+        applies oxygen or tactile stimulation after a short clinical delay.  This
+        is deliberately a feedback loop: the response is based on what actually
+        happened in the generated vitals, not on the event list that conditioned
+        the model.
+        """
+        responses: list[ClinicalEvent] = []
+        last_response = {"desaturation": -1e9, "bradycardia": -1e9, "apnea": -1e9}
+
+        for start, end in self._episodes(arrays.spo2, 85.0):
+            if start - last_response["desaturation"] < 8.0:
+                continue
+            minimum = float(np.min(arrays.spo2[start:end]))
+            depth = float(np.clip((85.0 - minimum) / 20.0, 0.0, 1.0))
+            event = ClinicalEvent(
+                start + float(rng.uniform(0.8, 2.0)),
+                8.0,
+                "oxygen",
+                0.45 + 0.45 * depth,
+                "Closed-loop oxygen for desaturation",
+                {"closed_loop": True, "trigger": "desaturation", "episode_minute": start},
+            )
+            schedule.add(event)
+            if event.start < schedule.shift_minutes:
+                responses.append(event)
+                last_response["desaturation"] = start
+
+        for start, end in self._episodes(arrays.hr, 100.0):
+            if start - last_response["bradycardia"] < 8.0:
+                continue
+            minimum = float(np.min(arrays.hr[start:end]))
+            depth = float(np.clip((100.0 - minimum) / 40.0, 0.0, 1.0))
+            event = ClinicalEvent(
+                start + float(rng.uniform(0.5, 1.4)),
+                5.0,
+                "handling",
+                0.45 + 0.45 * depth,
+                "Closed-loop tactile stimulation for bradycardia",
+                {"closed_loop": True, "trigger": "bradycardia", "episode_minute": start},
+            )
+            schedule.add(event)
+            if event.start < schedule.shift_minutes:
+                responses.append(event)
+                last_response["bradycardia"] = start
+
+        for start, _end in self._episodes(arrays.rr, 5.0):
+            if start - last_response["apnea"] < 8.0:
+                continue
+            event = ClinicalEvent(
+                start + float(rng.uniform(0.5, 1.4)),
+                5.0,
+                "handling",
+                0.60,
+                "Closed-loop tactile stimulation for apnoea",
+                {"closed_loop": True, "trigger": "apnea", "episode_minute": start},
+            )
+            schedule.add(event)
+            if event.start < schedule.shift_minutes:
+                responses.append(event)
+                last_response["apnea"] = start
+
+        return responses
+
     # ------------------------------------------------------------------
     def _scores(
         self,
@@ -413,11 +500,12 @@ class NeoSimulator:
                     detail = f"{detail} ({event.meta['medication']})"
                 if event.meta.get("volume_ml"):
                     detail = f"{detail} · {event.meta['volume_ml']} ml"
+                intervention_type = "closed_loop" if event.meta.get("closed_loop") else event.type
                 interventions.append(
                     {
                         "timestamp": bucket,
                         "minute": float(event.start),
-                        "type": INTERVENTION_MAP.get(event.type, event.type),
+                        "type": INTERVENTION_MAP.get(intervention_type, intervention_type),
                         "detail": detail,
                         "severity": float(event.severity),
                     }

@@ -5,6 +5,8 @@ import numpy as np
 
 from neosim.config import SimulationConfig
 from neosim.simulator.engine import NeoSimulator
+from neosim.simulator.events import EventSchedule
+from neosim.simulator.physiology import VitalArrays, apply_care_effects
 
 
 def _simulator(dummy_norm) -> NeoSimulator:
@@ -51,3 +53,28 @@ def test_enforced_events_reach_targets(dummy_norm):
         SimulationConfig(condition="bradycardia", shift_hours=4, interval_minutes=1, seed=12, severity=0.9)
     )
     assert result.arrays["hr"].min() < 110
+
+
+def test_closed_loop_responds_to_measured_episodes(dummy_norm):
+    sim = _simulator(dummy_norm)
+    n = 120
+    arrays = VitalArrays(
+        hr=np.full(n, 150.0),
+        rr=np.full(n, 40.0),
+        spo2=np.full(n, 96.0),
+        temp=np.full(n, 37.0),
+    )
+    arrays.spo2[30:36] = 75.0
+    arrays.hr[70:74] = 80.0
+    arrays.rr[95:99] = 2.0
+    schedule = EventSchedule(shift_minutes=n)
+    responses = sim._closed_loop_responses(arrays, schedule, np.random.default_rng(1))
+
+    triggers = {event.meta["trigger"] for event in responses}
+    assert triggers == {"desaturation", "bradycardia", "apnea"}
+    assert all(event.meta.get("closed_loop") for event in responses)
+
+    before = arrays.spo2.copy()
+    oxygen = [event for event in responses if event.type == "oxygen"]
+    apply_care_effects(arrays, schedule, SimulationConfig(), events=oxygen)
+    assert np.any(arrays.spo2 > before)

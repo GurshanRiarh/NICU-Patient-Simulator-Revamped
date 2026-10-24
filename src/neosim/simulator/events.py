@@ -101,8 +101,8 @@ class EventScheduler:
         immaturity = float(np.clip((34.0 - ga) / 10.0, 0.0, 1.0))
         low_weight = float(np.clip((2500.0 - weight) / 2000.0, 0.0, 1.0))
         base = 0.06 + 0.22 * immaturity + 0.12 * low_weight + 0.30 * self.severity
-        brady = base * 0.35
-        desat = base * 1.6
+        brady = base * 0.12
+        desat = base * 1.25
         apnea = 0.0
         tachy = 0.0
         if condition in {"bradycardia"}:
@@ -136,9 +136,11 @@ class EventScheduler:
     def build(self) -> EventSchedule:
         schedule = EventSchedule(shift_minutes=self.shift)
         self._spontaneous(schedule)
+        self._couple_spontaneous(schedule)
         if self.config.care_events:
             self._care(schedule)
-        self._closed_loop(schedule)
+            self._couple_care(schedule)
+            self._medication_interactions(schedule)
         self._dedupe(schedule)
         return schedule
 
@@ -162,6 +164,219 @@ class EventScheduler:
             severity = float(np.clip(self.rng.beta(2.0, 2.0), 0.2, 1.0))
             duration = float(self.rng.uniform(3.0, 15.0))
             schedule.add(ClinicalEvent(t, duration, "tachycardia", severity, "Tachycardia episode"))
+
+    @staticmethod
+    def _has_nearby(schedule: EventSchedule, types: set[str], start: float, pad: float = 2.0) -> bool:
+        return any(event.type in types and abs(event.start - start) <= pad for event in schedule.events)
+
+    @staticmethod
+    def _linked(
+        start: float,
+        duration: float,
+        kind: str,
+        severity: float,
+        label: str,
+        trigger: str,
+    ) -> ClinicalEvent:
+        return ClinicalEvent(
+            start,
+            duration,
+            kind,
+            float(np.clip(severity, 0.1, 1.0)),
+            label,
+            {"trigger": trigger},
+        )
+
+    def _couple_spontaneous(self, schedule: EventSchedule) -> None:
+        """Add the events that physiologically travel together.
+
+        Apnoea commonly produces desaturation and bradycardia; severe
+        desaturations and bradycardias also tend to co-occur.  The neural model
+        receives the resulting flags, so the coupling affects both the learned
+        trajectory and the explicit event-enforcement layer.
+        """
+        brady_types = {"bradycardia", "severe_bradycardia"}
+        desat_types = {"desaturation", "severe_desaturation"}
+        for event in list(schedule.events):
+            if event.type == "apnea":
+                if self.rng.random() < 0.55 + 0.35 * event.severity:
+                    start = event.start + float(self.rng.uniform(0.2, 1.5))
+                    severity = float(
+                        np.clip(0.15 + 0.9 * event.severity + self.rng.normal(0, 0.05), 0.2, 1.0)
+                    )
+                    kind = "severe_desaturation" if severity > 0.70 else "desaturation"
+                    if not self._has_nearby(schedule, desat_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(1.5, 4.0)),
+                                kind,
+                                severity,
+                                "Apnoea-associated desaturation",
+                                "apnea",
+                            )
+                        )
+                if self.rng.random() < 0.10 + 0.20 * event.severity:
+                    start = event.start + float(self.rng.uniform(0.4, 2.0))
+                    severity = float(np.clip(0.10 + 0.85 * event.severity, 0.1, 1.0))
+                    kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
+                    if not self._has_nearby(schedule, brady_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(0.8, 2.0)),
+                                kind,
+                                severity,
+                                "Apnoea-associated bradycardia",
+                                "apnea",
+                            )
+                        )
+            elif event.type in desat_types and event.severity >= 0.75:
+                if self.rng.random() < 0.08 + 0.12 * event.severity:
+                    start = event.start + float(self.rng.uniform(0.0, 1.0))
+                    severity = float(np.clip(0.10 + 0.70 * event.severity, 0.1, 1.0))
+                    kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
+                    if not self._has_nearby(schedule, brady_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(0.8, 2.0)),
+                                kind,
+                                severity,
+                                "Desaturation-associated bradycardia",
+                                "desaturation",
+                            )
+                        )
+            elif event.type in brady_types and event.severity >= 0.75:
+                if self.rng.random() < 0.05 + 0.10 * event.severity:
+                    start = event.start + float(self.rng.uniform(0.0, 1.0))
+                    severity = float(np.clip(0.15 + 0.75 * event.severity, 0.2, 1.0))
+                    kind = "severe_desaturation" if severity > 0.70 else "desaturation"
+                    if not self._has_nearby(schedule, desat_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(1.5, 4.0)),
+                                kind,
+                                severity,
+                                "Bradycardia-associated desaturation",
+                                "bradycardia",
+                            )
+                        )
+
+    def _couple_care(self, schedule: EventSchedule) -> None:
+        """Model events commonly triggered by feeding, handling and suction."""
+        cfg = self.config
+        immaturity = float(np.clip((34.0 - cfg.gestational_age_weeks) / 10.0, 0.0, 1.0))
+        brady_types = {"bradycardia", "severe_bradycardia"}
+        desat_types = {"desaturation", "severe_desaturation"}
+        for event in list(schedule.events):
+            if event.type == "feeding":
+                risk = float(np.clip(0.08 + 0.20 * immaturity + 0.15 * self.severity, 0.0, 0.40))
+                if self.rng.random() < risk:
+                    start = event.start + float(self.rng.uniform(5.0, 20.0))
+                    if not self._has_nearby(schedule, desat_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(1.0, 3.5)),
+                                "desaturation",
+                                float(self.rng.uniform(0.2, 0.55)),
+                                "Feeding-associated desaturation",
+                                "feeding",
+                            )
+                        )
+                if self.rng.random() < risk * 0.35:
+                    start = event.start + float(self.rng.uniform(8.0, 25.0))
+                    if not self._has_nearby(schedule, brady_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(0.8, 2.0)),
+                                "bradycardia",
+                                float(self.rng.uniform(0.2, 0.5)),
+                                "Feeding-associated bradycardia",
+                                "feeding",
+                            )
+                        )
+            elif event.type == "handling":
+                risk = float(np.clip(0.05 + 0.12 * immaturity + 0.10 * self.severity, 0.0, 0.30))
+                if self.rng.random() < risk:
+                    start = event.start + float(self.rng.uniform(0.2, 1.5))
+                    if not self._has_nearby(schedule, brady_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(0.8, 2.0)),
+                                "bradycardia",
+                                float(self.rng.uniform(0.2, 0.5)),
+                                "Handling-associated bradycardia",
+                                "handling",
+                            )
+                        )
+                if self.rng.random() < risk * 0.8:
+                    start = event.start + float(self.rng.uniform(0.5, 2.0))
+                    if not self._has_nearby(schedule, desat_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(1.0, 3.0)),
+                                "desaturation",
+                                float(self.rng.uniform(0.2, 0.5)),
+                                "Handling-associated desaturation",
+                                "handling",
+                            )
+                        )
+            elif event.type == "suction":
+                if self.rng.random() < 0.55:
+                    start = event.start + float(self.rng.uniform(0.2, 1.0))
+                    if not self._has_nearby(schedule, brady_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(0.8, 2.0)),
+                                "bradycardia",
+                                float(self.rng.uniform(0.3, 0.7)),
+                                "Suction-associated bradycardia",
+                                "suction",
+                            )
+                        )
+                if self.rng.random() < 0.45:
+                    start = event.start + float(self.rng.uniform(0.5, 1.5))
+                    if not self._has_nearby(schedule, desat_types, start):
+                        schedule.add(
+                            self._linked(
+                                start,
+                                float(self.rng.uniform(1.0, 3.5)),
+                                "desaturation",
+                                float(self.rng.uniform(0.3, 0.7)),
+                                "Suction-associated desaturation",
+                                "suction",
+                            )
+                        )
+
+    def _medication_interactions(self, schedule: EventSchedule) -> None:
+        """Let prescribed drugs alter later respiratory events."""
+        brady_types = {"bradycardia", "severe_bradycardia"}
+        desat_types = {"desaturation", "severe_desaturation"}
+        for medication in [event for event in schedule.events if event.type == "medication"]:
+            drug = medication.meta.get("medication")
+            if not drug:
+                continue
+            for event in schedule.events:
+                if event.start <= medication.start or "modified_by" in event.meta:
+                    continue
+                if drug == "caffeine" and event.type == "apnea":
+                    event.severity *= 0.65
+                    event.duration *= 0.85
+                    event.meta["modified_by"] = "caffeine"
+                elif drug == "surfactant" and event.type in desat_types:
+                    event.severity *= 0.75
+                    event.duration *= 0.85
+                    event.meta["modified_by"] = "surfactant"
+                elif drug == "morphine" and event.type in {"apnea"} | brady_types | desat_types:
+                    event.severity = min(1.0, event.severity * 1.25)
+                    event.meta["modified_by"] = "morphine"
 
     def _selected(self, name: str) -> bool:
         return not self.config.interventions or name in self.config.interventions
@@ -254,22 +469,6 @@ class EventScheduler:
         if self._selected("lighting adjustment"):
             t = float(self.rng.uniform(0.2, 0.8) * self.shift)
             schedule.add(ClinicalEvent(t, 10.0, "family_visit", 0.1, "Dim lights / reduce noise"))
-
-    def _closed_loop(self, schedule: EventSchedule) -> None:
-        if not self.config.closed_loop:
-            return
-        for event in list(schedule.events):
-            if event.type in {"severe_desaturation", "severe_bradycardia", "apnea"}:
-                delay = float(self.rng.uniform(0.5, 2.0))
-                schedule.add(
-                    ClinicalEvent(
-                        event.start + delay,
-                        8.0,
-                        "oxygen",
-                        0.55,
-                        "Closed-loop response: stimulation / oxygen",
-                    )
-                )
 
     @staticmethod
     def _dedupe(schedule: EventSchedule) -> None:

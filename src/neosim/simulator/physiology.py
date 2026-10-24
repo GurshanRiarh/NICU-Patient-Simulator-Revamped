@@ -71,25 +71,39 @@ def _scaled_effect(
     arrays.temp += temp * shape
 
 
-def apply_care_effects(arrays: VitalArrays, schedule: EventSchedule, config: SimulationConfig) -> None:
+def apply_care_effects(
+    arrays: VitalArrays,
+    schedule: EventSchedule,
+    config: SimulationConfig,
+    events: list[ClinicalEvent] | None = None,
+) -> None:
     """Apply explicit physiological responses to care events.
 
     The neural generator already captures spontaneous physiology and is
     conditioned on the event flags.  These kernels add the effects of routine
-    care that is not represented in the public training data.
+    care that is not represented in the public training data.  When ``events``
+    is supplied, only those events are applied; this is used by the closed-loop
+    controller after the first pass of generated vitals.
     """
-    for event in schedule.care_events():
+    source = schedule.care_events() if events is None else events
+    for event in source:
         etype = event.type
         med = event.meta.get("medication")
         if etype == "feeding":
             _scaled_effect(arrays, event, 5.0, 2.5, -0.8, 0.08, 5.0, 25.0)
         elif etype == "handling":
-            pain = 12.0 + 12.0 * event.severity
-            _scaled_effect(arrays, event, pain, pain * 0.45, -2.5, -0.05, 0.6, 6.0)
+            if event.meta.get("closed_loop"):
+                _scaled_effect(arrays, event, 9.0, 4.0, -0.8, 0.0, 0.3, 3.0)
+            else:
+                pain = 12.0 + 12.0 * event.severity
+                _scaled_effect(arrays, event, pain, pain * 0.45, -2.5, -0.05, 0.6, 6.0)
         elif etype == "position_change":
             _scaled_effect(arrays, event, 4.0, 1.5, 0.5, 0.0, 0.8, 4.0)
         elif etype == "oxygen":
-            _scaled_effect(arrays, event, -1.5, -1.0, 3.0, 0.0, 1.5, 9.0)
+            if event.meta.get("closed_loop"):
+                _scaled_effect(arrays, event, -2.0, -1.0, 6.0, 0.0, 1.2, 10.0)
+            else:
+                _scaled_effect(arrays, event, -1.5, -1.0, 3.0, 0.0, 1.5, 9.0)
         elif etype == "suction":
             _scaled_effect(arrays, event, -12.0, -4.0, -5.0, 0.0, 0.3, 1.5)
         elif etype == "family_visit":
@@ -141,7 +155,7 @@ def enforce_events(arrays: VitalArrays, schedule: EventSchedule, config: Simulat
             arrays.hr -= np.maximum(0.0, arrays.hr - target_hr) * shape
             arrays.spo2 -= np.maximum(0.0, arrays.spo2 - target_spo2) * shape
         elif event.type in {"desaturation", "severe_desaturation"}:
-            target_spo2 = 93.0 - 22.0 * sev
+            target_spo2 = 93.0 - 25.0 * sev
             arrays.spo2 -= np.maximum(0.0, arrays.spo2 - target_spo2) * shape
             # Desaturations are often preceded by a brief sympathetic rise.
             arrays.hr += 6.0 * sev * _kernel(len(arrays.hr), event.start, 0.5, 0.5, 3.0)
