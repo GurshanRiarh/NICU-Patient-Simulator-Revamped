@@ -1,0 +1,16 @@
+[Unit]
+Description=NeoSim NICU patient simulator dashboard
+Documentation=https://github.com/GurshanRiarh/NICU-Patient-Simulator-Revamped
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/.venv/bin/neosim serve --host __HOST__ --port __PORT__
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

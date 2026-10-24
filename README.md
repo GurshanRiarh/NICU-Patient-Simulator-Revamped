@@ -68,6 +68,29 @@ Open <http://127.0.0.1:8010>. Port 8000 is intentionally not assumed because it 
 
 If the checkpoint is missing, the simulator falls back to a physiology-only generator and prints a warning. Normalisation statistics are included in `data/processed/norm_stats.json`, so the fallback and API can still run.
 
+### Run the dashboard as a service
+
+On Linux, install the bundled systemd user unit so the dashboard starts automatically at login:
+
+```bash
+./scripts/install_service.sh
+```
+
+The installer resolves the current checkout path and defaults to `127.0.0.1:8010`; override it with `NEOSIM_HOST=... NEOSIM_PORT=... ./scripts/install_service.sh`. Inspect the service with:
+
+```bash
+systemctl --user status neosim-dashboard
+journalctl --user -u neosim-dashboard -f
+```
+
+To start it at boot before anyone logs in, enable lingering with `sudo loginctl enable-linger "$USER"`. To remove the service:
+
+```bash
+systemctl --user disable --now neosim-dashboard
+rm ~/.config/systemd/user/neosim-dashboard.service
+systemctl --user daemon-reload
+```
+
 ### Generate a shift from the CLI
 
 ```bash
