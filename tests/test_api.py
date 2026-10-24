@@ -21,6 +21,14 @@ def test_health(client):
     assert response.json()["status"] == "ok"
 
 
+def test_dashboard_assets_are_cache_busted(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "app.js?v=" in response.text
+    assert "style.css?v=" in response.text
+    assert response.headers["cache-control"] == "no-cache"
+
+
 def test_presets_and_simulate(client):
     assert client.get("/api/presets").status_code == 200
     response = client.post(

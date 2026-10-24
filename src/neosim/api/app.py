@@ -116,7 +116,18 @@ def _payload(result) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    return templates.TemplateResponse(request, "index.html", {"title": "NeoSim 2.0"})
+    assets = [
+        WEB_DIR / "static" / "app.js",
+        WEB_DIR / "static" / "style.css",
+    ]
+    asset_version = int(max(path.stat().st_mtime for path in assets))
+    response = templates.TemplateResponse(
+        request,
+        "index.html",
+        {"title": "NeoSim 2.0", "asset_version": asset_version},
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/health")
