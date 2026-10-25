@@ -21,8 +21,8 @@ The simulator uses two tiers of numbers:
 
 The held-out PreMo event burden used for calibration is `HR < 100` for
 bradycardia and `SpO2 < 85` for desaturation, expressed as minutes per hour.
-The current synthetic burden is approximately `0.11 vs 0.10` bradycardia
-minutes/hour and `2.03 vs 2.07` desaturation minutes/hour (100 two-hour shifts,
+The current synthetic burden is approximately `0.085 vs 0.099` bradycardia
+minutes/hour and `2.19 vs 2.07` desaturation minutes/hour (100 two-hour shifts,
 seed 2026). These are cohort-level calibration targets, not claims that every
 infant has the same event rate.
 
@@ -61,7 +61,7 @@ represent the range of events that produce monitor-level desaturations and
 bradycardias, not only formally diagnosed apnoea.
 
 The desaturation-to-bradycardia probability is deliberately low
-(`0.03 + 0.02 * severity`, capped at `0.05`). The 2020 cohort's combined-event
+(`0.015 + 0.01 * severity`, capped at `0.025`). The 2020 cohort's combined-event
 fraction is higher, but applying it directly produced too many bradycardia
 minutes against PreMo. This is a calibration decision, not a claim that the
 2020 cohort is wrong: the cohorts, event definitions and ascertainment differ.
@@ -180,7 +180,7 @@ preoxygenation, and `25%` of that with preoxygenation.
 | Apnoea-to-bradycardia probability | Zhao 2011 bins | 10%, 34%, 75% at 10-14 s, 15-20 s, > 20 s |
 | Apnoea-to-desaturation probability | Modelling choice from Poets 1993/Di Fiore 2001 | 55-95%, rising with duration and severity |
 | Bradycardia-to-desaturation association | Poets 1993 | 86% |
-| Desaturation-to-bradycardia probability | Calibrated to PreMo | 3-5%; lower than the raw 2020 combined fraction |
+| Desaturation-to-bradycardia probability | Calibrated to PreMo | 1.5-2.5%; lower than the raw 2020 combined fraction |
 | Feeding desaturation probability and severity | Thoyre 2003; Poets 1997; calibrated | 40-75% per feed; 59/20/21 severity split |
 | Handling/suction probabilities | Brandon 2022; Shah 1992; calibrated | Low for handling; higher for suction without preoxygenation |
 | Caffeine/surfactant/morphine event multipliers | FDA/EMA; NEOPAIN; AAP/Dani | Directions are evidence-based; exact multipliers are modelling choices |

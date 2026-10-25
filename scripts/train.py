@@ -37,7 +37,14 @@ def make_context(x1: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, to
     return context, context_mask
 
 
-def evaluate(model: NeoFlow, loader: DataLoader, device: torch.device) -> float:
+def evaluate(
+    model: NeoFlow,
+    loader: DataLoader,
+    device: torch.device,
+    aux_moment: float = 0.0,
+    aux_acf: float = 0.0,
+    aux_corr: float = 0.0,
+) -> float:
     model.eval()
     total, count = 0.0, 0
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
@@ -55,6 +62,9 @@ def evaluate(model: NeoFlow, loader: DataLoader, device: torch.device) -> float:
                 context,
                 context_mask,
                 cond_dropout=0.0,
+                aux_moment=aux_moment,
+                aux_acf=aux_acf,
+                aux_corr=aux_corr,
             )
             total += float(loss) * len(x1)
             count += len(x1)
@@ -74,8 +84,12 @@ def main() -> None:
     parser.add_argument("--heads", type=int, default=6)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--out", type=Path, default=DEFAULT_MODEL)
+    parser.add_argument("--init", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--aux-moment", type=float, default=0.0)
+    parser.add_argument("--aux-acf", type=float, default=0.0)
+    parser.add_argument("--aux-corr", type=float, default=0.0)
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -117,6 +131,11 @@ def main() -> None:
         dropout=args.dropout,
     )
     model = NeoFlow(cfg).to(device)
+    if args.init is not None:
+        payload = torch.load(args.init, map_location="cpu", weights_only=False)
+        state = payload.get("ema") or payload["model"]
+        model.load_state_dict(state, strict=True)
+        print(f"initialised from {args.init}")
     n_params = sum(p.numel() for p in model.parameters())
     print(f"NeoFlow parameters: {n_params / 1e6:.2f} M")
     optimizer = torch.optim.AdamW(
@@ -163,6 +182,9 @@ def main() -> None:
                     context,
                     context_mask,
                     cond_dropout=cfg.cond_dropout,
+                    aux_moment=args.aux_moment,
+                    aux_acf=args.aux_acf,
+                    aux_corr=args.aux_corr,
                 )
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -179,7 +201,14 @@ def main() -> None:
             if args.max_steps and global_step >= args.max_steps:
                 break
         train_loss = running / max(seen, 1)
-        val_loss = evaluate(model, val_loader, device)
+        val_loss = evaluate(
+            model,
+            val_loader,
+            device,
+            aux_moment=args.aux_moment,
+            aux_acf=args.aux_acf,
+            aux_corr=args.aux_corr,
+        )
         history["train"].append(train_loss)
         history["val"].append(val_loss)
         history["lr"].append(scheduler.get_last_lr()[0])

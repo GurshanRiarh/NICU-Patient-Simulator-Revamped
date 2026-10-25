@@ -1,0 +1,31 @@
+{
+  "model": {
+    "model": "NeoFlow",
+    "checkpoint": "neosim_flow.pt",
+    "params": 4278339,
+    "val_loss": 0.4722277154419678,
+    "epoch": 3,
+    "gpu": "NVIDIA GeForce RTX 3080 Ti"
+  },
+  "n": 100,
+  "seed": 1234,
+  "premo": {
+    "hr": {
+      "scale": 0.9077327280078695,
+      "shift": 13.919726750186243,
+      "real_mean": 157.4082161309382,
+      "real_std": 14.98697883208998,
+      "synth_mean": 158.0735,
+      "synth_std": 16.510343154620784
+    },
+    "spo2": {
+      "scale": 0.9849114050862116,
+      "shift": 0.6750241048817145,
+      "real_mean": 94.93260501469021,
+      "real_std": 4.787776903028497,
+      "synth_mean": 95.70158333333333,
+      "synth_std": 4.861124440537281
+    }
+  },
+  "pics": {}
+}

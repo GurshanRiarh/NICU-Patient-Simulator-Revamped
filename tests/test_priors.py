@@ -21,8 +21,8 @@ def test_desaturation_probability_is_bounded():
 
 
 def test_desaturation_bradycardia_probability_is_low():
-    assert priors.desaturation_bradycardia_probability(0.0) == 0.03
-    assert priors.desaturation_bradycardia_probability(1.0) == 0.05
+    assert priors.desaturation_bradycardia_probability(0.0) == 0.015
+    assert priors.desaturation_bradycardia_probability(1.0) == 0.025
 
 
 def test_feeding_severity_matches_reported_split():

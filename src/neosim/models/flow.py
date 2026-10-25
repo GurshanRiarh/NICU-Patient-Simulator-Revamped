@@ -175,6 +175,50 @@ class EMA:
         return self.shadow
 
 
+def _masked_moments(x: torch.Tensor, weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    denom = weight.sum(dim=(0, 1)).clamp_min(1.0)
+    mean = (x * weight).sum(dim=(0, 1)) / denom
+    var = (((x - mean) ** 2) * weight).sum(dim=(0, 1)) / denom
+    return mean, torch.sqrt(var.clamp_min(1e-6))
+
+
+def _acf_stats(
+    x: torch.Tensor, mask: torch.Tensor, lags: tuple[int, ...] = (1, 5, 15)
+) -> torch.Tensor | None:
+    stats: list[torch.Tensor] = []
+    for channel in range(x.shape[-1]):
+        full = (mask[:, :, channel] > 0).all(dim=1)
+        if not bool(full.any()):
+            continue
+        values = x[full, :, channel].float()
+        values = values - values.mean(dim=1, keepdim=True)
+        denom = (values * values).sum(dim=1).clamp_min(1e-6)
+        for lag in lags:
+            if values.shape[1] <= lag:
+                continue
+            stats.append(((values[:, :-lag] * values[:, lag:]).sum(dim=1) / denom).mean())
+    if not stats:
+        return None
+    return torch.stack(stats)
+
+
+def _correlation_stats(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor | None:
+    stats: list[torch.Tensor] = []
+    for a, b in ((0, 2), (0, 1)):
+        full = (mask[:, :, a] > 0).all(dim=1) & (mask[:, :, b] > 0).all(dim=1)
+        if not bool(full.any()):
+            continue
+        xa = x[full, :, a].float()
+        xb = x[full, :, b].float()
+        xa = xa - xa.mean(dim=1, keepdim=True)
+        xb = xb - xb.mean(dim=1, keepdim=True)
+        denom = torch.sqrt((xa * xa).sum(dim=1) * (xb * xb).sum(dim=1)).clamp_min(1e-6)
+        stats.append(((xa * xb).sum(dim=1) / denom).mean())
+    if not stats:
+        return None
+    return torch.stack(stats)
+
+
 def flow_matching_loss(
     model: NeoFlow,
     x1: torch.Tensor,
@@ -185,8 +229,17 @@ def flow_matching_loss(
     context: torch.Tensor | None = None,
     context_mask: torch.Tensor | None = None,
     cond_dropout: float | None = None,
+    aux_moment: float = 0.0,
+    aux_acf: float = 0.0,
+    aux_corr: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """Rectified-flow MSE loss with channel and context masking."""
+    """Rectified-flow MSE loss with channel, context and auxiliary structure losses.
+
+    The auxiliary terms act on the one-step estimate ``x1_hat = x_t + (1-t)v``.
+    They are deliberately computed only for ``t > 0.5``, where that estimate is
+    close enough to the clean sample to give a stable moment, autocorrelation
+    and cross-channel correlation target.
+    """
     b, seq_len, _ = x1.shape
     device = x1.device
     x0 = torch.randn_like(x1)
@@ -205,9 +258,38 @@ def flow_matching_loss(
     weight = mask * (1 - context_mask)
     denom = weight.sum().clamp_min(1.0)
     loss = (((v - target) ** 2) * weight).sum() / denom
+    metrics: dict[str, float] = {}
     with torch.no_grad():
         per_channel = (((v - target) ** 2) * weight).sum(dim=(0, 1)) / weight.sum(dim=(0, 1)).clamp_min(1.0)
-    return loss, {f"loss_ch{i}": float(v) for i, v in enumerate(per_channel.detach().cpu())}
+        metrics.update({f"loss_ch{i}": float(value) for i, value in enumerate(per_channel.detach().cpu())})
+
+    if aux_moment or aux_acf or aux_corr:
+        x1_hat = x_t + (1 - t[:, None, None]) * v
+        high_t = (t > 0.5).float()[:, None, None]
+        aux_weight = weight * high_t
+        if aux_moment:
+            mean_hat, std_hat = _masked_moments(x1_hat.float(), aux_weight)
+            mean_true, std_true = _masked_moments(x1.float(), aux_weight)
+            moment_loss = ((mean_hat - mean_true) ** 2 + (std_hat - std_true) ** 2).mean()
+            loss = loss + aux_moment * moment_loss
+            metrics["aux_moment"] = float(moment_loss.detach().cpu())
+        if aux_acf:
+            acf_mask = mask * high_t
+            acf_hat = _acf_stats(x1_hat.float(), acf_mask, lags=(1, 5, 15))
+            acf_true = _acf_stats(x1.float(), acf_mask, lags=(1, 5, 15))
+            if acf_hat is not None and acf_true is not None:
+                acf_loss = ((acf_hat - acf_true) ** 2).mean()
+                loss = loss + aux_acf * acf_loss
+                metrics["aux_acf"] = float(acf_loss.detach().cpu())
+        if aux_corr:
+            corr_mask = mask * high_t
+            corr_hat = _correlation_stats(x1_hat.float(), corr_mask)
+            corr_true = _correlation_stats(x1.float(), corr_mask)
+            if corr_hat is not None and corr_true is not None:
+                corr_loss = ((corr_hat - corr_true) ** 2).mean()
+                loss = loss + aux_corr * corr_loss
+                metrics["aux_corr"] = float(corr_loss.detach().cpu())
+    return loss, metrics
 
 
 @torch.no_grad()
@@ -224,12 +306,16 @@ def sample(
     seed: int | None = None,
     noise_scale: float = 0.9,
     noise_phi: float = 0.5,
+    noise_phi_channels: tuple[float, float, float] | None = None,
+    noise_scale_channels: tuple[float, float, float] | None = None,
 ) -> torch.Tensor:
     """Generate trajectories with Euler integration and classifier-free guidance.
 
     ``noise_phi`` applies a stationary AR(1) correlation to the initial noise so
     the generated traces retain the minute-to-minute autocorrelation seen in
-    neonatal monitoring; ``noise_scale`` calibrates its amplitude.
+    neonatal monitoring; ``noise_scale`` calibrates its amplitude.  The optional
+    per-channel tuples override the scalar values, which is useful because HR,
+    RR and SpO2 need different amounts of temporal noise.
     """
     device = static.device
     b, seq_len, c = static.shape[0], time_feats.shape[1], model.cfg.n_channels
@@ -238,12 +324,20 @@ def sample(
         generator.manual_seed(seed)
     eps = torch.randn((b, seq_len, c), device=device, generator=generator)
     x = torch.empty_like(eps)
+    if noise_phi_channels is None:
+        phi = torch.full((1, c), noise_phi, device=device)
+    else:
+        phi = torch.tensor(noise_phi_channels, device=device).view(1, c)
+    if noise_scale_channels is None:
+        scale = torch.full((1, c), noise_scale, device=device)
+    else:
+        scale = torch.tensor(noise_scale_channels, device=device).view(1, c)
     previous = torch.zeros((b, c), device=device)
-    innovation = math.sqrt(max(1.0 - noise_phi**2, 0.0))
+    innovation = torch.sqrt((1.0 - phi**2).clamp_min(0.0))
     for t in range(seq_len):
-        previous = noise_phi * previous + innovation * eps[:, t]
+        previous = phi * previous + innovation * eps[:, t]
         x[:, t] = previous
-    x = x * noise_scale
+    x = x * scale
     if context is None:
         context = torch.zeros_like(x)
     if context_mask is None:

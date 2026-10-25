@@ -25,7 +25,13 @@ def load_real(name: str) -> WindowSet:
     return WindowSet(data["x"], data["mask"])
 
 
-def sample_windows(sim: NeoSimulator, cohort: str, n: int, seed: int) -> WindowSet:
+def sample_windows(
+    sim: NeoSimulator,
+    cohort: str,
+    n: int,
+    seed: int,
+    sampling: dict[str, float] | None = None,
+) -> WindowSet:
     rng = np.random.default_rng(seed)
     conditions = [
         "stable_preterm",
@@ -61,6 +67,7 @@ def sample_windows(sim: NeoSimulator, cohort: str, n: int, seed: int) -> WindowS
             seed=int(rng.integers(0, 2**31 - 1)),
             care_events=False,
             closed_loop=False,
+            **(sampling or {}),
         )
         result = sim.simulate(config)
         xs[i, :, 0] = result.arrays["hr"]
@@ -76,6 +83,16 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=RESULTS_DIR / "evaluation.json")
     parser.add_argument("--model", default=None)
     parser.add_argument("--skip-save", action="store_true")
+    parser.add_argument("--sampling-steps", type=int, default=None)
+    parser.add_argument("--cfg-scale", type=float, default=None)
+    parser.add_argument("--noise-phi", type=float, default=None)
+    parser.add_argument("--noise-scale", type=float, default=None)
+    parser.add_argument("--noise-phi-hr", type=float, default=None)
+    parser.add_argument("--noise-phi-rr", type=float, default=None)
+    parser.add_argument("--noise-phi-spo2", type=float, default=None)
+    parser.add_argument("--noise-scale-hr", type=float, default=None)
+    parser.add_argument("--noise-scale-rr", type=float, default=None)
+    parser.add_argument("--noise-scale-spo2", type=float, default=None)
     args = parser.parse_args()
 
     sim = NeoSimulator(model_path=args.model) if args.model else NeoSimulator()
@@ -83,8 +100,24 @@ def main() -> None:
 
     real_premo = load_real("premo_test")
     real_pics = load_real("pics_test")
-    synth_premo = sample_windows(sim, "premo", args.n, args.seed)
-    synth_pics = sample_windows(sim, "pics", args.n, args.seed + 1)
+    sampling = {
+        key: value
+        for key, value in {
+            "sampling_steps": args.sampling_steps,
+            "cfg_scale": args.cfg_scale,
+            "noise_phi": args.noise_phi,
+            "noise_scale": args.noise_scale,
+            "noise_phi_hr": args.noise_phi_hr,
+            "noise_phi_rr": args.noise_phi_rr,
+            "noise_phi_spo2": args.noise_phi_spo2,
+            "noise_scale_hr": args.noise_scale_hr,
+            "noise_scale_rr": args.noise_scale_rr,
+            "noise_scale_spo2": args.noise_scale_spo2,
+        }.items()
+        if value is not None
+    }
+    synth_premo = sample_windows(sim, "premo", args.n, args.seed, sampling)
+    synth_pics = sample_windows(sim, "pics", args.n, args.seed + 1, sampling)
 
     report["premo"] = evaluate_pair(real_premo, synth_premo, "premo_test", (0, 2))
     report["pics"] = evaluate_pair(real_pics, synth_pics, "pics_test", (0, 1))

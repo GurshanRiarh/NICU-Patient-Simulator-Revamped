@@ -106,7 +106,7 @@ class EventScheduler:
         # cohort.  Conditional bradycardia-desaturation coupling is handled
         # separately from the literature priors.
         brady = base * 0.09
-        desat = base * 1.25
+        desat = base * 1.35
         apnea = 0.0
         tachy = 0.0
         if condition in {"bradycardia"}:

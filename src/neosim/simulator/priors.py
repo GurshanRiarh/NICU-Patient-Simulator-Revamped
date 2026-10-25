@@ -48,13 +48,13 @@ APNEA_BRADY_DELAY_MIN = (0.05, 0.25)
 # reverse probability is much lower: Martini 2020 (PMID 32446489) found that
 # isolated desaturations were the commonest event (625/1050) and isolated
 # bradycardias the least common (171/1050), but the PreMo cohort's
-# threshold-defined burden implies that only about 5% of desaturations are
+# threshold-defined burden implies that only about 2% of desaturations are
 # followed by a bradycardia.  The value below is therefore calibrated to PreMo
 # rather than taken directly from the 2020 combined-event fraction.
 BRADY_DESAT_ASSOC = 0.86
-DESAT_BRADY_BASE = 0.03
-DESAT_BRADY_SEVERITY = 0.02
-DESAT_BRADY_MAX = 0.05
+DESAT_BRADY_BASE = 0.015
+DESAT_BRADY_SEVERITY = 0.01
+DESAT_BRADY_MAX = 0.025
 
 
 def sample_apnea_duration(rng: np.random.Generator) -> float:

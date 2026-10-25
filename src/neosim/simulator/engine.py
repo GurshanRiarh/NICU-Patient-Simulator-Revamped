@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from neosim.config import (
+    BASELINE_CALIBRATION_FILE,
     DEFAULT_MODEL,
     EVENT_TYPES,
     NORM_FILE,
@@ -179,6 +180,9 @@ class NeoSimulator:
         self.channel_std = np.array([self.norm["channels"][s]["std"] for s in SIGNALS], dtype=np.float32)
         self.static_mean = np.asarray(self.norm["static"]["mean"], dtype=np.float32)
         self.static_std = np.asarray(self.norm["static"]["std"], dtype=np.float32)
+        self.baseline_calibration: dict = {}
+        if BASELINE_CALIBRATION_FILE.exists():
+            self.baseline_calibration = json.loads(BASELINE_CALIBRATION_FILE.read_text())
 
     # ------------------------------------------------------------------
     def simulate(self, config: SimulationConfig) -> SimulationResult:
@@ -190,6 +194,8 @@ class NeoSimulator:
         event_matrix = schedule.matrix(total_minutes)
         if self.model is not None:
             vitals = self._generate_neural(config, schedule, total_minutes, rng)
+            if config.baseline_calibration and self.baseline_calibration:
+                vitals = self._apply_baseline_calibration(vitals, config)
         else:
             vitals = self._generate_fallback(config, event_matrix, total_minutes, rng)
 
@@ -232,6 +238,27 @@ class NeoSimulator:
             event_matrix=agg["event_matrix"],
             model_meta=self.model_meta,
         )
+
+    def _apply_baseline_calibration(self, vitals: np.ndarray, config: SimulationConfig) -> np.ndarray:
+        """Apply validation-fitted per-cohort affine calibration to the baseline.
+
+        The calibration is fitted on held-out validation windows and applied
+        before care/event enforcement, so it corrects baseline mean/spread
+        without shrinking the enforced clinical events.
+        """
+        params = self.baseline_calibration.get(config.cohort)
+        if not params:
+            return vitals
+        out = vitals.copy()
+        for index, name in enumerate(SIGNALS):
+            channel = params.get(name)
+            if not channel:
+                continue
+            out[:, index] = out[:, index] * float(channel["scale"]) + float(channel["shift"])
+        out[:, 0] = np.clip(out[:, 0], 40, 250)
+        out[:, 1] = np.clip(out[:, 1], 0, 120)
+        out[:, 2] = np.clip(out[:, 2], 30, 100)
+        return out
 
     # ------------------------------------------------------------------
     def _generate_neural(
@@ -287,9 +314,29 @@ class NeoSimulator:
                         mask,
                         context,
                         context_mask,
-                        steps=35,
-                        cfg_scale=1.45,
+                        steps=config.sampling_steps,
+                        cfg_scale=config.cfg_scale,
                         seed=int(rng.integers(0, 2**31 - 1)),
+                        noise_phi=config.noise_phi,
+                        noise_scale=config.noise_scale,
+                        noise_phi_channels=(
+                            config.noise_phi_hr if config.noise_phi_hr is not None else config.noise_phi,
+                            config.noise_phi_rr if config.noise_phi_rr is not None else config.noise_phi,
+                            config.noise_phi_spo2
+                            if config.noise_phi_spo2 is not None
+                            else config.noise_phi,
+                        ),
+                        noise_scale_channels=(
+                            config.noise_scale_hr
+                            if config.noise_scale_hr is not None
+                            else config.noise_scale,
+                            config.noise_scale_rr
+                            if config.noise_scale_rr is not None
+                            else config.noise_scale,
+                            config.noise_scale_spo2
+                            if config.noise_scale_spo2 is not None
+                            else config.noise_scale,
+                        ),
                     )[0]
                     .cpu()
                     .numpy()

@@ -87,3 +87,20 @@ def test_closed_loop_responds_to_measured_episodes(dummy_norm):
     oxygen = [event for event in responses if event.type == "oxygen"]
     apply_care_effects(arrays, schedule, SimulationConfig(), events=oxygen)
     assert np.any(arrays.spo2 > before)
+
+
+def test_baseline_calibration_applies_only_to_configured_channels(dummy_norm):
+    sim = _simulator(dummy_norm)
+    sim.baseline_calibration = {
+        "premo": {"hr": {"scale": 0.5, "shift": 5.0}},
+    }
+    vitals = np.array(
+        [
+            [150.0, 45.0, 95.0],
+            [160.0, 50.0, 90.0],
+        ],
+        dtype=np.float32,
+    )
+    out = sim._apply_baseline_calibration(vitals, SimulationConfig(cohort="premo"))
+    assert np.allclose(out[:, 0], [80.0, 85.0])
+    assert np.allclose(out[:, 1:], vitals[:, 1:])

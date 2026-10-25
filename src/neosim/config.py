@@ -148,7 +148,19 @@ class SimulationConfig:
     closed_loop: bool = True
     temperature_setpoint: float = 36.8
     target_spo2: float = 94.0
+    sampling_steps: int = 35
+    cfg_scale: float = 1.45
+    noise_phi: float = 0.5
+    noise_scale: float = 0.9
+    noise_phi_hr: float | None = 0.2
+    noise_phi_rr: float | None = 0.2
+    noise_phi_spo2: float | None = 0.52
+    noise_scale_hr: float | None = None
+    noise_scale_rr: float | None = None
+    noise_scale_spo2: float | None = 0.95
+    baseline_calibration: bool = True
 
 
 DEFAULT_MODEL = MODEL_DIR / "neosim_flow.pt"
 NORM_FILE = PROCESSED_DIR / "norm_stats.json"
+BASELINE_CALIBRATION_FILE = MODEL_DIR / "baseline_calibration.json"
