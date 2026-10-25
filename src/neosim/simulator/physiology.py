@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from neosim.config import SimulationConfig
+from neosim.simulator import priors
 from neosim.simulator.events import ClinicalEvent, EventSchedule
 
 
@@ -50,6 +51,10 @@ def _bump(n: int, start: float, duration: float) -> np.ndarray:
         return shape
     u = (t[lo:hi] - start) / max(duration, 0.5)
     shape[lo:hi] = np.sin(np.pi * np.clip(u, 0, 1)) ** 2
+    # Monitor data are sampled once per minute.  A brief event can fall between
+    # samples, so guarantee that its nearest sample reaches the enforced target.
+    peak = int(np.clip(round(start + duration / 2.0), 0, n - 1))
+    shape[peak] = 1.0
     return shape
 
 
@@ -90,35 +95,144 @@ def apply_care_effects(
         etype = event.type
         med = event.meta.get("medication")
         if etype == "feeding":
-            _scaled_effect(arrays, event, 5.0, 2.5, -0.8, 0.08, 5.0, 25.0)
+            _scaled_effect(
+                arrays,
+                event,
+                priors.FEEDING_HR,
+                priors.FEEDING_RR,
+                priors.FEEDING_SPO2,
+                priors.FEEDING_TEMP,
+                5.0,
+                25.0,
+            )
         elif etype == "handling":
             if event.meta.get("closed_loop"):
-                _scaled_effect(arrays, event, 9.0, 4.0, -0.8, 0.0, 0.3, 3.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.CLOSED_LOOP_TACTILE_HR,
+                    priors.CLOSED_LOOP_TACTILE_RR,
+                    priors.CLOSED_LOOP_TACTILE_SPO2,
+                    0.0,
+                    0.3,
+                    3.0,
+                )
             else:
-                pain = 12.0 + 12.0 * event.severity
-                _scaled_effect(arrays, event, pain, pain * 0.45, -2.5, -0.05, 0.6, 6.0)
+                shape = _kernel(len(arrays.hr), event.start, event.duration, 0.6, 6.0)
+                arrays.hr += (
+                    priors.HANDLING_HR_BASE + priors.HANDLING_HR_SEVERITY * event.severity
+                ) * shape
+                arrays.rr += (
+                    priors.HANDLING_RR_BASE + priors.HANDLING_RR_SEVERITY * event.severity
+                ) * shape
+                arrays.spo2 += (
+                    priors.HANDLING_SPO2_BASE + priors.HANDLING_SPO2_SEVERITY * event.severity
+                ) * shape
+                arrays.temp += priors.HANDLING_TEMP * event.severity * shape
         elif etype == "position_change":
-            _scaled_effect(arrays, event, 4.0, 1.5, 0.5, 0.0, 0.8, 4.0)
+            _scaled_effect(
+                arrays,
+                event,
+                priors.POSITION_HR,
+                priors.POSITION_RR,
+                priors.POSITION_SPO2,
+                0.0,
+                0.8,
+                4.0,
+            )
         elif etype == "oxygen":
             if event.meta.get("closed_loop"):
-                _scaled_effect(arrays, event, -2.0, -1.0, 6.0, 0.0, 1.2, 10.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.OXYGEN_CLOSED_HR,
+                    priors.OXYGEN_CLOSED_RR,
+                    priors.OXYGEN_CLOSED_SPO2,
+                    0.0,
+                    1.2,
+                    10.0,
+                )
             else:
-                _scaled_effect(arrays, event, -1.5, -1.0, 3.0, 0.0, 1.5, 9.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.OXYGEN_SCHEDULED_HR,
+                    priors.OXYGEN_SCHEDULED_RR,
+                    priors.OXYGEN_SCHEDULED_SPO2,
+                    0.0,
+                    1.5,
+                    9.0,
+                )
         elif etype == "suction":
-            _scaled_effect(arrays, event, -12.0, -4.0, -5.0, 0.0, 0.3, 1.5)
+            scale = priors.suction_effect_scale(bool(event.meta.get("preoxygenated", False)))
+            _scaled_effect(
+                arrays,
+                event,
+                priors.SUCTION_HR * scale,
+                priors.SUCTION_RR * scale,
+                priors.SUCTION_SPO2 * scale,
+                0.0,
+                0.3,
+                1.5,
+            )
         elif etype == "family_visit":
-            _scaled_effect(arrays, event, -3.0, -1.5, 0.8, 0.1, 4.0, 20.0)
+            _scaled_effect(
+                arrays,
+                event,
+                priors.KMC_HR,
+                priors.KMC_RR,
+                priors.KMC_SPO2,
+                priors.KMC_TEMP,
+                4.0,
+                20.0,
+            )
         elif etype == "pain":
-            _scaled_effect(arrays, event, -4.0, -2.0, 0.5, 0.0, 2.0, 12.0)
+            _scaled_effect(
+                arrays,
+                event,
+                priors.PAIN_HR,
+                priors.PAIN_RR,
+                priors.PAIN_SPO2,
+                0.0,
+                2.0,
+                12.0,
+            )
         elif etype == "medication":
             if med == "caffeine":
-                _scaled_effect(arrays, event, 4.0, 5.0, 0.5, 0.05, 3.0, 120.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.CAFFEINE_HR,
+                    priors.CAFFEINE_RR,
+                    priors.CAFFEINE_SPO2,
+                    0.0,
+                    3.0,
+                    priors.CAFFEINE_TAU_DECAY_MIN,
+                )
             elif med == "morphine":
-                _scaled_effect(arrays, event, -5.0, -6.0, -1.5, -0.08, 4.0, 45.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.MORPHINE_HR,
+                    priors.MORPHINE_RR,
+                    priors.MORPHINE_SPO2,
+                    priors.MORPHINE_TEMP,
+                    4.0,
+                    priors.MORPHINE_TAU_DECAY_MIN,
+                )
             elif med == "antibiotic":
                 _scaled_effect(arrays, event, 0.0, 0.0, 0.0, -0.0, 10.0, 240.0)
             elif med == "surfactant":
-                _scaled_effect(arrays, event, -3.0, -6.0, 4.0, 0.0, 2.0, 90.0)
+                _scaled_effect(
+                    arrays,
+                    event,
+                    priors.SURFACTANT_HR,
+                    priors.SURFACTANT_RR,
+                    priors.SURFACTANT_SPO2,
+                    0.0,
+                    2.0,
+                    priors.SURFACTANT_TAU_DECAY_MIN,
+                )
         elif etype == "lighting":
             _scaled_effect(arrays, event, -1.0, -0.5, 0.2, 0.0, 2.0, 20.0)
     # A small, consistent effect of incubator humidity/feeding on temperature.
@@ -151,19 +265,23 @@ def enforce_events(arrays: VitalArrays, schedule: EventSchedule, config: Simulat
         sev = float(np.clip(event.severity, 0.1, 1.0))
         if event.type in {"bradycardia", "severe_bradycardia"}:
             target_hr = 92.0 - 35.0 * sev
-            target_spo2 = baseline_spo2 - 8.0 * sev
             arrays.hr -= np.maximum(0.0, arrays.hr - target_hr) * shape
-            arrays.spo2 -= np.maximum(0.0, arrays.spo2 - target_spo2) * shape
+            # Only bradycardias explicitly linked to a desaturation should
+            # lower SpO2 here.  Isolated bradycardias are common (about 14% in
+            # Poets 1993) and their SpO2 is handled by a separate event when
+            # one is present.
+            if event.meta.get("associated_desat", True):
+                target_spo2 = baseline_spo2 - 8.0 * sev
+                arrays.spo2 -= np.maximum(0.0, arrays.spo2 - target_spo2) * shape
         elif event.type in {"desaturation", "severe_desaturation"}:
             target_spo2 = 93.0 - 25.0 * sev
             arrays.spo2 -= np.maximum(0.0, arrays.spo2 - target_spo2) * shape
-            # Desaturations are often preceded by a brief sympathetic rise.
-            arrays.hr += 6.0 * sev * _kernel(len(arrays.hr), event.start, 0.5, 0.5, 3.0)
         elif event.type == "apnea":
+            # Apnoea enforcement only guarantees the respiratory pause.  Any
+            # desaturation or bradycardia is represented by its own linked
+            # event, which avoids double-counting the same physiology.
             target_rr = max(0.0, 3.0 - 3.0 * sev)
             arrays.rr -= np.maximum(0.0, arrays.rr - target_rr) * shape
-            arrays.spo2 -= np.maximum(0.0, arrays.spo2 - (baseline_spo2 - 12.0 * sev)) * shape
-            arrays.hr -= np.maximum(0.0, arrays.hr - (baseline_hr - 15.0 * sev)) * shape
         elif event.type == "tachycardia":
             target_hr = baseline_hr + 25.0 * sev
             arrays.hr += np.maximum(0.0, target_hr - arrays.hr) * shape
@@ -195,11 +313,11 @@ def generate_temperature(
     temp += 0.12 * np.sin(2 * np.pi * (np.arange(n) / 1440.0 - 0.15))
     for event in schedule.events:
         if event.type == "feeding":
-            temp += 0.08 * _kernel(n, event.start, 20.0, 5.0, 30.0) * event.severity
+            temp += priors.FEEDING_TEMP * _kernel(n, event.start, 20.0, 5.0, 30.0) * event.severity
         elif event.type in {"handling", "suction"}:
-            temp -= 0.06 * _kernel(n, event.start, 2.0, 0.5, 10.0) * event.severity
+            temp += priors.HANDLING_TEMP * _kernel(n, event.start, 2.0, 0.5, 10.0) * event.severity
         elif event.type == "family_visit":
-            temp += 0.05 * _kernel(n, event.start, 30.0, 5.0, 30.0) * event.severity
+            temp += priors.KMC_TEMP * _kernel(n, event.start, 30.0, 5.0, 30.0) * event.severity
         elif event.type == "medication" and event.meta.get("medication") == "antibiotic":
             temp -= 0.15 * _kernel(n, event.start, 60.0, 15.0, 240.0) * event.severity
     if config.condition in {"sepsis", "nec"}:

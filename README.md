@@ -52,13 +52,15 @@ Rectified flow learns a short ODE that transports Gaussian noise to the data dis
 
 ### Interdependent events and care
 
-The simulator no longer treats bradycardia, desaturation, apnoea and care as independent lists. The event engine is calibrated against the held-out PreMo event burden and adds clinically motivated dependencies:
+The simulator no longer treats bradycardia, desaturation, apnoea and care as independent lists. The event engine is literature-informed and calibrated against the held-out PreMo event burden, and it adds clinically motivated dependencies:
 
-- **Apnoea** commonly produces a delayed desaturation and, less often, bradycardia.
-- **Severe desaturations and bradycardias** receive a small, low-probability cross-link. The PreMo event annotations show that most bradycardia minutes are *not* co-labelled with desaturation, so the simulator avoids forcing strong co-occurrence.
-- **Feeding, handling and suction** can trigger desaturation or bradycardia, with risk increasing with immaturity and severity.
+- **Apnoea** produces a delayed desaturation and a duration-dependent bradycardia: 10% at 10–14 s, 34% at 15–20 s and 75% above 20 s (Zhao 2011). Desaturation usually starts first and the bradycardia follows (Poets 1993).
+- **Bradycardia** is associated with a desaturation in 86% of cases (Poets 1993). The reverse link is much rarer — 3–5% of desaturations in the calibrated PreMo cohort — so the simulator does not force every desaturation to become a bradycardia.
+- **Feeding** risk depends on route (bottle vs gavage) and immaturity, with a 59/20/21 mild/moderate/severe desaturation split from Thoyre 2003. **Handling** mostly raises heart rate, while **suction** effects are strongly reduced by preoxygenation (Shah 1992).
 - **Caffeine** attenuates later apnoea; **surfactant** attenuates later desaturation. The scheduler supports morphine worsening respiratory events, but morphine is not prescribed by default.
 - **Signal-driven closed loop** — after generating the first pass, the controller measures SpO₂, HR and RR, detects episodes, and adds oxygen or tactile stimulation after a short delay. Responses are recorded as `closed-loop care` interventions and influence pain/stability scores.
+
+The numerical priors, calibration decisions, conflicting evidence and full citation table are in [Clinical evidence](docs/CLINICAL_EVIDENCE.md).
 
 The pipeline order is: generate NeoFlow vitals → apply scheduled care kernels → enforce scheduled clinical events → run signal-driven rescue → add monitor noise. The rescue layer is post-hoc: it changes the monitor trajectory and downstream scores, but it does not re-run NeoFlow inside the same episode. That boundary is documented in [Limitations and safety](#limitations-and-safety).
 
@@ -215,19 +217,19 @@ Synthetic cohorts were generated with the simulator for 100 two-hour shifts per 
 
 | Cohort | Channel | Real mean ± SD | NeoSim mean ± SD | KS ↓ | Wasserstein ↓ | ACF(1) real / synth |
 | --- | --- | --- | --- | --- | --- | --- |
-| PreMo | HR | 157.9 ± 15.0 | 159.2 ± 21.8 | 0.124 | 5.66 | 0.854 / 0.892 |
-| PreMo | SpO₂ | 95.0 ± 4.7 | 96.0 ± 4.6 | 0.193 | 1.07 | 0.809 / 0.802 |
-| PICS | HR | 155.8 ± 11.1 | 150.8 ± 17.5 | 0.280 | 6.88 | 0.825 / 0.861 |
-| PICS | RR | 40.9 ± 5.2 | 43.7 ± 6.3 | 0.242 | 3.00 | 0.652 / 0.827 |
+| PreMo | HR | 157.9 ± 15.0 | 159.5 ± 21.2 | 0.122 | 5.25 | 0.854 / 0.882 |
+| PreMo | SpO₂ | 95.0 ± 4.7 | 96.0 ± 4.6 | 0.193 | 1.08 | 0.809 / 0.771 |
+| PICS | HR | 155.8 ± 11.1 | 150.8 ± 17.4 | 0.279 | 6.79 | 0.825 / 0.848 |
+| PICS | RR | 40.9 ± 5.2 | 43.7 ± 6.2 | 0.244 | 2.99 | 0.652 / 0.828 |
 
 | Cohort | Real-vs-synthetic AUC ↓ | Nearest-neighbour DCR ratio |
 | --- | --- | --- |
-| PreMo | 0.895 | 0.999 |
-| PICS | 0.871 | 0.999 |
+| PreMo | 0.904 | 0.999 |
+| PICS | 0.856 | 0.999 |
 
-An AUC of 0.5 would mean the classifier cannot separate real from synthetic windows. NeoSim is clearly better than chance but still distinguishable; this is an honest limitation of the current model. The coupled event engine brought the PreMo event burden close to the held-out data: **0.19 vs 0.10 bradycardia minutes/hour** and **2.01 vs 2.07 desaturation minutes/hour**. The trade-off is a slightly wider HR distribution and a small upward shift in mean SpO₂ (96.0 vs 95.0), because the model was not retrained with the new coupling rules.
+An AUC of 0.5 would mean the classifier cannot separate real from synthetic windows. NeoSim is clearly better than chance but still distinguishable; this is an honest limitation of the current model. The literature-informed coupling brought the PreMo event burden close to the held-out data: **0.11 vs 0.10 bradycardia minutes/hour** and **2.03 vs 2.07 desaturation minutes/hour**. The trade-off is a slightly wider HR distribution and a small upward shift in mean SpO₂ (96.0 vs 95.0), because the model was not retrained with the new coupling rules.
 
-The cross-signal fit remains conservative: PreMo HR–SpO₂ peak correlation is −0.066 vs −0.087 real, while PICS HR–RR is −0.091 vs −0.381. The PICS gap is the clearest remaining modelling limitation; RR is also too smooth (ACF(1) 0.827 vs 0.652).
+The cross-signal fit remains conservative: PreMo HR–SpO₂ peak correlation is −0.051 vs −0.087 real, while PICS HR–RR is −0.082 vs −0.381. The PICS gap is the clearest remaining modelling limitation; RR is also too smooth (ACF(1) 0.828 vs 0.652).
 
 ![Held-out distributions](results/figures/distributions.png)
 ![Evaluation summary](results/figures/evaluation.png)
@@ -340,6 +342,7 @@ uv run ruff check src scripts tests
 │   ├── data/                     # preprocessing and PyTorch datasets
 │   ├── models/flow.py            # NeoFlow, EMA, flow loss, sampler
 │   ├── simulator/
+│   │   ├── priors.py             # literature-derived probabilities, timings and effects
 │   │   ├── events.py             # coupled spontaneous/care events and medication rules
 │   │   ├── physiology.py         # response kernels, event enforcement, temperature
 │   │   └── engine.py             # generation, signal-driven closed loop, scoring, exports
@@ -350,7 +353,7 @@ uv run ruff check src scripts tests
 ├── scripts/                      # download, train, evaluate, figures
 ├── tests/                        # event, flow, engine, API and metric tests
 ├── data/legacy/                  # original 8-hour CSVs
-├── docs/                         # PreMo README and licence
+├── docs/                         # clinical evidence table, PreMo README and licence
 ├── results/                      # evaluation, training history, figures
 └── models/neosim_flow.pt         # trained checkpoint
 ```
@@ -362,11 +365,12 @@ uv run ruff check src scripts tests
 - **Research prototype.** Not a medical device and not validated for clinical use.
 - **Small PICS cohort.** Only 10 infants are available; the test split is one infant, so PICS metrics are high-variance.
 - **Approximate PICS metadata.** Gestational age and birth weight are cohort-level approximations, not per-infant measurements.
-- **Care events are heuristic.** Routine care effects are physiologically motivated kernels, not learned from labelled interventions.
-- **Event coupling is rule-based.** Apnoea, desaturation and bradycardia links are calibrated against cohort-level event burden, not learned per patient. Medication effects are simplified dose-independent multipliers.
+- **Care events are literature-informed, not learned.** Routine care probabilities and direct effects use published evidence where available and documented modelling choices where studies report direction or ratios rather than exact vital-sign deltas. See [Clinical evidence](docs/CLINICAL_EVIDENCE.md).
+- **Event coupling is rule-based.** Apnoea, desaturation and bradycardia links are informed by the literature and calibrated against cohort-level event burden, not learned per patient. Medication effects are simplified dose-independent multipliers.
 - **Closed loop is post-hoc.** Rescue responses alter the final monitor trace, interventions and scores, but do not regenerate NeoFlow vitals within the same episode. A true controller-in-the-loop would need retraining with action-conditioned trajectories.
 - **Conditioning is not causal.** The model reproduces associations in the training data; it does not establish treatment effects.
-- **Residual distribution gap.** The real-vs-synthetic AUC remains around 0.87–0.90; HR variability is high in the PreMo cohort and SpO₂ has a small upward mean shift.
+- **One-minute resolution.** Sub-minute bradycardias cannot be represented exactly; they are enforced at the nearest monitor sample. This is a deliberate monitor-level abstraction, not a claim about the true duration of a four-second bradycardia.
+- **Residual distribution gap.** The real-vs-synthetic AUC remains around 0.86–0.90; HR variability is high in the PreMo cohort and SpO₂ has a small upward mean shift.
 - **No raw data redistribution.** PreMo is subject to its ODC-By licence; PICS is distributed through PhysioNet. Users must follow the original dataset terms.
 - **Synthetic outputs must not be presented as real patient records.**
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from neosim.config import EVENT_INDEX, EVENT_TYPES, SimulationConfig
+from neosim.simulator import priors
 
 SPONTANEOUS = {
     "bradycardia",
@@ -101,7 +102,10 @@ class EventScheduler:
         immaturity = float(np.clip((34.0 - ga) / 10.0, 0.0, 1.0))
         low_weight = float(np.clip((2500.0 - weight) / 2000.0, 0.0, 1.0))
         base = 0.06 + 0.22 * immaturity + 0.12 * low_weight + 0.30 * self.severity
-        brady = base * 0.12
+        # The absolute bradycardia rate is calibrated to the held-out PreMo
+        # cohort.  Conditional bradycardia-desaturation coupling is handled
+        # separately from the literature priors.
+        brady = base * 0.09
         desat = base * 1.25
         apnea = 0.0
         tachy = 0.0
@@ -148,17 +152,23 @@ class EventScheduler:
         brady_rate, desat_rate, apnea_rate, tachy_rate = self._rates()
         for t in self._poisson_times(brady_rate):
             severity = float(np.clip(self.rng.beta(2.0, 2.5) + 0.15 * self.severity, 0.1, 1.0))
-            duration = float(self.rng.uniform(0.5, 2.2))
+            # Bradycardias are defined by a fall of at least 33% for at least
+            # 4 s (Poets 1993), so most are much shorter than a minute.
+            duration = float(self.rng.uniform(0.1, 0.9))
             kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
             schedule.add(ClinicalEvent(t, duration, kind, severity, "Spontaneous bradycardia"))
         for t in self._poisson_times(desat_rate):
             severity = float(np.clip(self.rng.beta(2.0, 2.0) + 0.1 * self.severity, 0.1, 1.0))
-            duration = float(self.rng.uniform(1.0, 4.5))
+            # A 1-4 min desaturation is a plausible monitor-level episode; the
+            # exact duration is not well standardised across studies.
+            duration = float(self.rng.uniform(1.0, 4.0))
             kind = "severe_desaturation" if severity > 0.70 else "desaturation"
             schedule.add(ClinicalEvent(t, duration, kind, severity, "Spontaneous desaturation"))
         for t in self._poisson_times(apnea_rate):
             severity = float(np.clip(self.rng.beta(2.0, 2.0) + 0.15 * self.severity, 0.2, 1.0))
-            duration = float(self.rng.uniform(0.5, 1.8))
+            # Apnoea duration is drawn from the literature mixture (10-90 s),
+            # which drives the duration-dependent bradycardia probability.
+            duration = priors.sample_apnea_duration(self.rng) / 60.0
             schedule.add(ClinicalEvent(t, duration, "apnea", severity, "Apnoea of prematurity"))
         for t in self._poisson_times(tachy_rate):
             severity = float(np.clip(self.rng.beta(2.0, 2.0), 0.2, 1.0))
@@ -190,137 +200,177 @@ class EventScheduler:
     def _couple_spontaneous(self, schedule: EventSchedule) -> None:
         """Add the events that physiologically travel together.
 
-        Apnoea commonly produces desaturation and bradycardia; severe
-        desaturations and bradycardias also tend to co-occur.  The neural model
-        receives the resulting flags, so the coupling affects both the learned
-        trajectory and the explicit event-enforcement layer.
+        The conditional probabilities and delays come from the neonatal
+        literature (see :mod:`neosim.simulator.priors`):
+
+        * bradycardia risk rises with apnoea duration: 10% at 10-14 s, 34% at
+          15-20 s and 75% above 20 s (Zhao 2011);
+        * desaturation typically starts within seconds of apnoea onset and
+          precedes bradycardia (Poets 1993);
+        * 86% of bradycardias are associated with a desaturation (Poets 1993);
+          the reverse probability is calibrated to PreMo and is much lower than
+          the 2020 cohort's combined-event fraction.
         """
         brady_types = {"bradycardia", "severe_bradycardia"}
         desat_types = {"desaturation", "severe_desaturation"}
         for event in list(schedule.events):
             if event.type == "apnea":
-                if self.rng.random() < 0.55 + 0.35 * event.severity:
-                    start = event.start + float(self.rng.uniform(0.2, 1.5))
+                duration_s = event.duration * 60.0
+                event.meta["associated_desat"] = False
+                if self.rng.random() < priors.desaturation_given_apnea(duration_s, event.severity):
+                    start = event.start + float(self.rng.uniform(*priors.APNEA_DESAT_DELAY_MIN))
                     severity = float(
                         np.clip(0.15 + 0.9 * event.severity + self.rng.normal(0, 0.05), 0.2, 1.0)
                     )
                     kind = "severe_desaturation" if severity > 0.70 else "desaturation"
+                    event.meta["associated_desat"] = True
                     if not self._has_nearby(schedule, desat_types, start):
                         schedule.add(
                             self._linked(
                                 start,
-                                float(self.rng.uniform(1.5, 4.0)),
+                                float(self.rng.uniform(0.5, 3.0)),
                                 kind,
                                 severity,
                                 "Apnoea-associated desaturation",
                                 "apnea",
                             )
                         )
-                if self.rng.random() < 0.10 + 0.20 * event.severity:
-                    start = event.start + float(self.rng.uniform(0.4, 2.0))
+                event.meta["associated_brady"] = False
+                if self.rng.random() < priors.bradycardia_given_apnea(duration_s):
+                    start = event.start + float(self.rng.uniform(*priors.APNEA_BRADY_DELAY_MIN))
                     severity = float(np.clip(0.10 + 0.85 * event.severity, 0.1, 1.0))
                     kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
+                    event.meta["associated_brady"] = True
                     if not self._has_nearby(schedule, brady_types, start):
-                        schedule.add(
-                            self._linked(
-                                start,
-                                float(self.rng.uniform(0.8, 2.0)),
-                                kind,
-                                severity,
-                                "Apnoea-associated bradycardia",
-                                "apnea",
-                            )
+                        linked = self._linked(
+                            start,
+                            float(self.rng.uniform(0.1, 0.9)),
+                            kind,
+                            severity,
+                            "Apnoea-associated bradycardia",
+                            "apnea",
                         )
-            elif event.type in desat_types and event.severity >= 0.75:
-                if self.rng.random() < 0.08 + 0.12 * event.severity:
-                    start = event.start + float(self.rng.uniform(0.0, 1.0))
-                    severity = float(np.clip(0.10 + 0.70 * event.severity, 0.1, 1.0))
-                    kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
-                    if not self._has_nearby(schedule, brady_types, start):
-                        schedule.add(
-                            self._linked(
-                                start,
-                                float(self.rng.uniform(0.8, 2.0)),
-                                kind,
-                                severity,
-                                "Desaturation-associated bradycardia",
-                                "desaturation",
-                            )
+                        linked.meta["associated_desat"] = self._has_nearby(
+                            schedule, desat_types, start
                         )
-            elif event.type in brady_types and event.severity >= 0.75:
-                if self.rng.random() < 0.05 + 0.10 * event.severity:
-                    start = event.start + float(self.rng.uniform(0.0, 1.0))
+                        schedule.add(linked)
+            elif event.type in brady_types:
+                if self.rng.random() < priors.BRADY_DESAT_ASSOC:
+                    event.meta["associated_desat"] = True
+                    start = event.start + float(self.rng.uniform(0.0, 0.2))
                     severity = float(np.clip(0.15 + 0.75 * event.severity, 0.2, 1.0))
                     kind = "severe_desaturation" if severity > 0.70 else "desaturation"
                     if not self._has_nearby(schedule, desat_types, start):
                         schedule.add(
                             self._linked(
                                 start,
-                                float(self.rng.uniform(1.5, 4.0)),
+                                float(self.rng.uniform(0.5, 3.0)),
                                 kind,
                                 severity,
                                 "Bradycardia-associated desaturation",
                                 "bradycardia",
                             )
                         )
+                else:
+                    event.meta["associated_desat"] = False
+            elif event.type in desat_types:
+                if self.rng.random() < priors.desaturation_bradycardia_probability(event.severity):
+                    start = event.start + float(self.rng.uniform(0.0, 0.2))
+                    severity = float(np.clip(0.10 + 0.70 * event.severity, 0.1, 1.0))
+                    kind = "severe_bradycardia" if severity > 0.72 else "bradycardia"
+                    if not self._has_nearby(schedule, brady_types, start):
+                        linked = self._linked(
+                            start,
+                            float(self.rng.uniform(0.1, 0.9)),
+                            kind,
+                            severity,
+                            "Desaturation-associated bradycardia",
+                            "desaturation",
+                        )
+                        linked.meta["associated_desat"] = True
+                        schedule.add(linked)
 
     def _couple_care(self, schedule: EventSchedule) -> None:
-        """Model events commonly triggered by feeding, handling and suction."""
+        """Model events triggered by feeding, handling and suction.
+
+        The risks are literature-derived where evidence exists.  Feeding
+        desaturation is the best-quantified link (Thoyre 2003; Poets 1997);
+        handling usually raises heart rate rather than causing bradycardia
+        (Brandon 2022); suction effects are strongly modified by preoxygenation
+        (Shah 1992).  Each care-associated bradycardia is treated as an
+        isolated bradycardia unless a separate desaturation event is generated,
+        so the event labels and the enforced vitals stay consistent.
+        """
         cfg = self.config
         immaturity = float(np.clip((34.0 - cfg.gestational_age_weeks) / 10.0, 0.0, 1.0))
         brady_types = {"bradycardia", "severe_bradycardia"}
         desat_types = {"desaturation", "severe_desaturation"}
         for event in list(schedule.events):
             if event.type == "feeding":
-                risk = float(np.clip(0.08 + 0.20 * immaturity + 0.15 * self.severity, 0.0, 0.40))
-                if self.rng.random() < risk:
-                    start = event.start + float(self.rng.uniform(5.0, 20.0))
+                route_scale = 1.0 if event.meta.get("route", "bottle") == "bottle" else 0.35
+                feeding_desat_risk = (
+                    priors.feeding_desaturation_probability(immaturity, self.severity)
+                    * route_scale
+                )
+                if self.rng.random() < feeding_desat_risk:
+                    if self.rng.random() < priors.FEEDING_DESAT_DURING_PROB:
+                        offset = self.rng.uniform(*priors.FEEDING_DESAT_DURING_WINDOW)
+                    else:
+                        offset = self.rng.uniform(*priors.FEEDING_DESAT_LATE_WINDOW)
+                    start = event.start + float(offset)
+                    severity = priors.feeding_desaturation_severity(self.rng)
+                    kind = "severe_desaturation" if severity >= 0.52 else "desaturation"
                     if not self._has_nearby(schedule, desat_types, start):
                         schedule.add(
                             self._linked(
                                 start,
-                                float(self.rng.uniform(1.0, 3.5)),
-                                "desaturation",
-                                float(self.rng.uniform(0.2, 0.55)),
+                                float(self.rng.uniform(0.5, 3.0)),
+                                kind,
+                                severity,
                                 "Feeding-associated desaturation",
                                 "feeding",
                             )
                         )
-                if self.rng.random() < risk * 0.35:
-                    start = event.start + float(self.rng.uniform(8.0, 25.0))
+                if self.rng.random() < priors.feeding_bradycardia_probability(
+                    immaturity, self.severity
+                ):
+                    start = event.start + float(self.rng.uniform(*priors.FEEDING_DESAT_DURING_WINDOW))
                     if not self._has_nearby(schedule, brady_types, start):
-                        schedule.add(
-                            self._linked(
-                                start,
-                                float(self.rng.uniform(0.8, 2.0)),
-                                "bradycardia",
-                                float(self.rng.uniform(0.2, 0.5)),
-                                "Feeding-associated bradycardia",
-                                "feeding",
-                            )
+                        linked = self._linked(
+                            start,
+                            float(self.rng.uniform(0.1, 0.9)),
+                            "bradycardia",
+                            float(self.rng.uniform(0.2, 0.5)),
+                            "Feeding-associated bradycardia",
+                            "feeding",
                         )
+                        linked.meta["associated_desat"] = False
+                        schedule.add(linked)
             elif event.type == "handling":
-                risk = float(np.clip(0.05 + 0.12 * immaturity + 0.10 * self.severity, 0.0, 0.30))
-                if self.rng.random() < risk:
-                    start = event.start + float(self.rng.uniform(0.2, 1.5))
+                if self.rng.random() < priors.handling_bradycardia_probability(
+                    immaturity, self.severity
+                ):
+                    start = event.start + float(self.rng.uniform(0.0, 2.0))
                     if not self._has_nearby(schedule, brady_types, start):
-                        schedule.add(
-                            self._linked(
-                                start,
-                                float(self.rng.uniform(0.8, 2.0)),
-                                "bradycardia",
-                                float(self.rng.uniform(0.2, 0.5)),
-                                "Handling-associated bradycardia",
-                                "handling",
-                            )
+                        linked = self._linked(
+                            start,
+                            float(self.rng.uniform(0.1, 0.9)),
+                            "bradycardia",
+                            float(self.rng.uniform(0.15, 0.45)),
+                            "Handling-associated bradycardia",
+                            "handling",
                         )
-                if self.rng.random() < risk * 0.8:
-                    start = event.start + float(self.rng.uniform(0.5, 2.0))
+                        linked.meta["associated_desat"] = False
+                        schedule.add(linked)
+                if self.rng.random() < priors.handling_desaturation_probability(
+                    immaturity, self.severity
+                ):
+                    start = event.start + float(self.rng.uniform(0.0, 2.0))
                     if not self._has_nearby(schedule, desat_types, start):
                         schedule.add(
                             self._linked(
                                 start,
-                                float(self.rng.uniform(1.0, 3.0)),
+                                float(self.rng.uniform(0.5, 3.0)),
                                 "desaturation",
                                 float(self.rng.uniform(0.2, 0.5)),
                                 "Handling-associated desaturation",
@@ -328,28 +378,47 @@ class EventScheduler:
                             )
                         )
             elif event.type == "suction":
-                if self.rng.random() < 0.55:
-                    start = event.start + float(self.rng.uniform(0.2, 1.0))
+                preoxygenated = event.meta.get("preoxygenated")
+                if preoxygenated is None:
+                    preoxygenated = self.rng.random() < priors.PREOXYGENATION_PROB
+                    event.meta["preoxygenated"] = preoxygenated
+                risk_scale = priors.suction_risk_scale(preoxygenated)
+                if self.rng.random() < (
+                    priors.suction_bradycardia_probability(immaturity, self.severity) * risk_scale
+                ):
+                    start = event.start + float(self.rng.uniform(0.0, 0.5))
+                    severity = float(
+                        self.rng.uniform(0.2, 0.35)
+                        if preoxygenated
+                        else self.rng.uniform(0.35, 0.7)
+                    )
                     if not self._has_nearby(schedule, brady_types, start):
-                        schedule.add(
-                            self._linked(
-                                start,
-                                float(self.rng.uniform(0.8, 2.0)),
-                                "bradycardia",
-                                float(self.rng.uniform(0.3, 0.7)),
-                                "Suction-associated bradycardia",
-                                "suction",
-                            )
+                        linked = self._linked(
+                            start,
+                            float(self.rng.uniform(0.1, 0.9)),
+                            "bradycardia",
+                            severity,
+                            "Suction-associated bradycardia",
+                            "suction",
                         )
-                if self.rng.random() < 0.45:
-                    start = event.start + float(self.rng.uniform(0.5, 1.5))
+                        linked.meta["associated_desat"] = False
+                        schedule.add(linked)
+                if self.rng.random() < (
+                    priors.suction_desaturation_probability(immaturity, self.severity) * risk_scale
+                ):
+                    start = event.start + float(self.rng.uniform(0.0, 0.5))
+                    severity = float(
+                        self.rng.uniform(0.15, 0.35)
+                        if preoxygenated
+                        else self.rng.uniform(0.35, 0.75)
+                    )
                     if not self._has_nearby(schedule, desat_types, start):
                         schedule.add(
                             self._linked(
                                 start,
-                                float(self.rng.uniform(1.0, 3.5)),
+                                float(self.rng.uniform(0.5, 3.0)),
                                 "desaturation",
-                                float(self.rng.uniform(0.3, 0.7)),
+                                severity,
                                 "Suction-associated desaturation",
                                 "suction",
                             )
@@ -367,15 +436,20 @@ class EventScheduler:
                 if event.start <= medication.start or "modified_by" in event.meta:
                     continue
                 if drug == "caffeine" and event.type == "apnea":
-                    event.severity *= 0.65
-                    event.duration *= 0.85
+                    event.severity *= priors.CAFFEINE_APNEA_SEVERITY_MULT
+                    event.duration *= priors.CAFFEINE_APNEA_DURATION_MULT
+                    event.meta["modified_by"] = "caffeine"
+                elif drug == "caffeine" and event.type in brady_types | desat_types:
+                    event.severity *= priors.CAFFEINE_RESP_EVENT_SEVERITY_MULT
                     event.meta["modified_by"] = "caffeine"
                 elif drug == "surfactant" and event.type in desat_types:
-                    event.severity *= 0.75
-                    event.duration *= 0.85
+                    event.severity *= priors.SURFACTANT_DESAT_SEVERITY_MULT
+                    event.duration *= priors.SURFACTANT_DESAT_DURATION_MULT
                     event.meta["modified_by"] = "surfactant"
                 elif drug == "morphine" and event.type in {"apnea"} | brady_types | desat_types:
-                    event.severity = min(1.0, event.severity * 1.25)
+                    event.severity = min(
+                        1.0, event.severity * priors.MORPHINE_EVENT_SEVERITY_MULT
+                    )
                     event.meta["modified_by"] = "morphine"
 
     def _selected(self, name: str) -> bool:
@@ -385,19 +459,38 @@ class EventScheduler:
         cfg = self.config
         if self._selected("feeding"):
             # Feeding every three hours; slightly jittered as in real care.
+            # Bottle feeds produce about three times more desaturations than
+            # bolus gavage feeds (Poets 1997), so the route is recorded and the
+            # coupling risk is scaled accordingly.
             t = float(self.rng.uniform(0, 60))
             while t < self.shift:
+                route = "bottle" if self.rng.random() < 0.5 else "gavage"
+                label = "Bottle feed" if route == "bottle" else "Gavage feed"
                 schedule.add(
                     ClinicalEvent(
-                        t, 25.0, "feeding", 0.5, "Enteral feed", {"volume_ml": int(self.rng.integers(5, 35))}
+                        t,
+                        25.0,
+                        "feeding",
+                        0.5,
+                        label,
+                        {"volume_ml": int(self.rng.integers(5, 35)), "route": route},
                     )
                 )
                 t += 180.0 + float(self.rng.normal(0, 10))
         if self._selected("diaper change"):
-            t = float(self.rng.uniform(20, 100))
-            while t < self.shift:
-                schedule.add(ClinicalEvent(t, 6.0, "handling", 0.35, "Nappy change"))
-                t += 180.0 + float(self.rng.normal(0, 12))
+            # Cluster nappy changes with feeds.  Bundled care events in preterm
+            # infants last about 28 min and contain several activities
+            # (Brandon 2022), so care is not scheduled as isolated tasks.
+            feedings = [event for event in schedule.events if event.type == "feeding"]
+            if feedings:
+                for feeding in feedings:
+                    t = feeding.start + float(self.rng.uniform(5.0, 20.0))
+                    schedule.add(ClinicalEvent(t, 6.0, "handling", 0.35, "Nappy change"))
+            else:
+                t = float(self.rng.uniform(20, 100))
+                while t < self.shift:
+                    schedule.add(ClinicalEvent(t, 6.0, "handling", 0.35, "Nappy change"))
+                    t += 180.0 + float(self.rng.normal(0, 12))
         if self._selected("position change"):
             t = float(self.rng.uniform(10, 90))
             while t < self.shift:
@@ -445,12 +538,27 @@ class EventScheduler:
         if self._selected("suction") and cfg.condition in {"rds"}:
             t = float(self.rng.uniform(20, 120))
             while t < self.shift:
-                schedule.add(ClinicalEvent(t, 3.0, "suction", 0.6, "Endotracheal / nasal suction"))
+                schedule.add(
+                    ClinicalEvent(
+                        t,
+                        3.0,
+                        "suction",
+                        0.6,
+                        "Endotracheal / nasal suction",
+                        {"preoxygenated": bool(self.rng.random() < priors.PREOXYGENATION_PROB)},
+                    )
+                )
                 t += 240.0 + float(self.rng.normal(0, 25))
         if self._selected("family visitation"):
             for _ in range(int(self.rng.integers(0, 3))):
                 t = float(self.rng.uniform(0, self.shift))
-                schedule.add(ClinicalEvent(t, 45.0, "family_visit", 0.2, "Family visit / kangaroo care"))
+                # Kangaroo care has a measurable bradycardia/desaturation
+                # benefit, whereas a brief family visit does not necessarily
+                # include holding; the severity captures that variation.
+                severity = float(self.rng.uniform(0.7, 1.0))
+                schedule.add(
+                    ClinicalEvent(t, 45.0, "family_visit", severity, "Kangaroo care / family visit")
+                )
         if self._selected("lab test"):
             t = float(self.rng.uniform(0.15, 0.55) * self.shift)
             schedule.add(ClinicalEvent(t, 4.0, "handling", 0.55, "Heel prick / blood gas"))

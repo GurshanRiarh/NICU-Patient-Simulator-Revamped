@@ -5,8 +5,8 @@ import numpy as np
 
 from neosim.config import SimulationConfig
 from neosim.simulator.engine import NeoSimulator
-from neosim.simulator.events import EventSchedule
-from neosim.simulator.physiology import VitalArrays, apply_care_effects
+from neosim.simulator.events import ClinicalEvent, EventSchedule
+from neosim.simulator.physiology import VitalArrays, apply_care_effects, enforce_events
 
 
 def _simulator(dummy_norm) -> NeoSimulator:
@@ -47,12 +47,21 @@ def test_simulation_is_reproducible(dummy_norm):
     assert np.allclose(first, second)
 
 
-def test_enforced_events_reach_targets(dummy_norm):
-    sim = _simulator(dummy_norm)
-    result = sim.simulate(
-        SimulationConfig(condition="bradycardia", shift_hours=4, interval_minutes=1, seed=12, severity=0.9)
+def test_enforced_events_reach_targets():
+    n = 120
+    arrays = VitalArrays(
+        hr=np.full(n, 150.0),
+        rr=np.full(n, 40.0),
+        spo2=np.full(n, 96.0),
+        temp=np.full(n, 37.0),
     )
-    assert result.arrays["hr"].min() < 110
+    schedule = EventSchedule(shift_minutes=n)
+    schedule.add(
+        ClinicalEvent(30.0, 1.0, "bradycardia", 0.8, meta={"associated_desat": False})
+    )
+    enforce_events(arrays, schedule, SimulationConfig())
+    assert arrays.hr.min() < 100
+    assert np.allclose(arrays.spo2, 96.0)
 
 
 def test_closed_loop_responds_to_measured_episodes(dummy_norm):
