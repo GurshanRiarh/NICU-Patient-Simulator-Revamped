@@ -21,7 +21,7 @@ import numpy as np
 
 from neosim.config import PROCESSED_DIR, RESULTS_DIR
 from neosim.evaluation.metrics import WindowSet, evaluate_pair
-from neosim.simulator.calibration import OnlinePatientCalibrator
+from neosim.simulator.calibration import DynamicPatientCalibrator
 from neosim.simulator.engine import NeoSimulator
 
 COHORT_SETTINGS = {
@@ -32,6 +32,11 @@ COHORT_SETTINGS = {
         "max_patients": 120,
         "windows_per_patient": 12,
         "per_window_seed": False,
+        "cross_channels": (0, 2),
+        "cross_factor": 0.0,
+        "acf_noise_scale": 0.4,
+        "rank_channels": (),
+        "rank_stats_scale": 1.0,
     },
     "pics": {
         "channels": (0, 1),
@@ -40,6 +45,11 @@ COHORT_SETTINGS = {
         "max_patients": None,
         "windows_per_patient": None,
         "per_window_seed": True,
+        "cross_channels": (0, 1),
+        "cross_factor": 1.3,
+        "acf_noise_scale": 0.75,
+        "rank_channels": (1,),
+        "rank_stats_scale": 0.72,
     },
 }
 
@@ -103,7 +113,21 @@ def evaluate_cohort(
                 batch_size=args.batch_size,
             )
         for k in range(cal_n, len(indices)):
-            calibrator = OnlinePatientCalibrator(channels)
+            calibrator = DynamicPatientCalibrator(
+                channels,
+                cross_channels=settings["cross_channels"],
+                cross_factor=args.cross_factor
+                if args.cross_factor is not None
+                else settings["cross_factor"],
+                acf_noise_scale=args.acf_noise_scale
+                if args.acf_noise_scale is not None
+                else settings["acf_noise_scale"],
+                rank_channels=settings["rank_channels"],
+                rank_stats_scale=args.rank_stats_scale
+                if args.rank_stats_scale is not None
+                else settings["rank_stats_scale"],
+                jitter=args.jitter,
+            )
             calibrator.fit(
                 data["x"][indices[k - cal_n : k]],
                 synthetic[k - cal_n : k],
@@ -183,6 +207,10 @@ def main() -> None:
     parser.add_argument("--windows-per-patient", type=int, default=None)
     parser.add_argument("--calibration-windows", type=int, default=None)
     parser.add_argument("--stats-window", type=int, default=None)
+    parser.add_argument("--acf-noise-scale", type=float, default=None)
+    parser.add_argument("--cross-factor", type=float, default=None)
+    parser.add_argument("--jitter", type=float, default=0.02)
+    parser.add_argument("--rank-stats-scale", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--model", default=None)
