@@ -27,7 +27,7 @@ from neosim.simulator.engine import NeoSimulator
 COHORT_SETTINGS = {
     "premo": {
         "channels": (0, 2),
-        "calibration_windows": 6,
+        "calibration_windows": 4,
         "stats_window": 90,
         "max_patients": 120,
         "windows_per_patient": 12,
@@ -37,6 +37,7 @@ COHORT_SETTINGS = {
         "acf_noise_scale": 0.4,
         "rank_channels": (),
         "rank_stats_scale": 1.0,
+        "spo2_shift": 0.3,
     },
     "pics": {
         "channels": (0, 1),
@@ -50,6 +51,7 @@ COHORT_SETTINGS = {
         "acf_noise_scale": 0.75,
         "rank_channels": (1,),
         "rank_stats_scale": 0.72,
+        "spo2_shift": 0.0,
     },
 }
 
@@ -140,6 +142,8 @@ def evaluate_cohort(
                 mask=data["mask"][indices[k]],
                 seed=seed + k * 10 + 1,
             )
+            shift = args.spo2_shift if args.spo2_shift is not None else settings["spo2_shift"]
+            calibrated[:, 2] = np.clip(calibrated[:, 2] + shift, 30.0, 100.0)
             real_windows.append(data["x"][indices[k]])
             synthetic_windows.append(calibrated)
             masks.append(data["mask"][indices[k]])
@@ -211,6 +215,7 @@ def main() -> None:
     parser.add_argument("--cross-factor", type=float, default=None)
     parser.add_argument("--jitter", type=float, default=0.02)
     parser.add_argument("--rank-stats-scale", type=float, default=None)
+    parser.add_argument("--spo2-shift", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--model", default=None)
