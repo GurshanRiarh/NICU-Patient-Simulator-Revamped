@@ -231,6 +231,26 @@ An AUC of 0.5 would mean the classifier cannot separate real from synthetic wind
 
 The cross-signal fit remains conservative: PreMo HR–SpO₂ peak correlation is 0.001 vs −0.087 real, while PICS HR–RR is −0.053 vs −0.381. The PICS gap is the clearest remaining modelling limitation; its test split contains a single infant, and RR is slightly too smooth (ACF(1) 0.697 vs 0.652).
 
+### Online patient-calibrated mode
+
+The population-level numbers above do not use patient history. For deployment with a warm-up record, the simulator also supports online patient calibration. The first 5–6 windows from a patient are used to fit per-channel quantile maps from synthetic to real prior windows; PreMo also matches the mean and SD of the last 90 minutes of the preceding window. No current or future vitals are used.
+
+| Cohort | Channel | KS before | KS after | AUC before | AUC after |
+| --- | --- | ---: | ---: | ---: | ---: |
+| PreMo | HR | 0.029 | **0.016** | 0.869 | **0.616** |
+| PreMo | SpO₂ | 0.125 | **0.042** | 0.869 | **0.616** |
+| PICS | HR | 0.268 | **0.026** | 0.879 | **0.678** |
+| PICS | RR | 0.256 | **0.044** | 0.879 | **0.678** |
+
+The online evaluation used 720 PreMo windows from 120 patients and 59 PICS windows from the single test infant. After calibration:
+
+- PreMo HR `159.6 / 159.4` bpm, SD `13.4 / 13.7`; SpO₂ `95.1 / 95.2%`, SD `5.0 / 4.9`; bradycardia `0.008 vs 0.011` min/h; desaturation `2.55 vs 2.42` min/h.
+- PICS HR `155.7 / 155.9` bpm, SD `11.8 / 11.2`; RR `41.1 / 40.6` breaths/min, SD `5.5 / 5.2`; bradycardia `0.0 vs 0.0` min/h.
+- Cross-signal correlation is still conservative: PreMo HR–SpO₂ `−0.099 vs −0.039`; PICS HR–RR `−0.131 vs −0.383`.
+- PICS RR remains smoother than real (`ACF(1) 0.805 vs 0.664`).
+
+This is a patient-specific warm-up protocol, not a population-level indistinguishability claim. The unconditional generator remains the more conservative benchmark. The reusable calibrator is in `src/neosim/simulator/calibration.py`; the full warm-up loop is in `scripts/evaluate_online.py`.
+
 ![Held-out distributions](results/figures/distributions.png)
 ![Evaluation summary](results/figures/evaluation.png)
 ![Real versus synthetic windows](results/figures/real_vs_synthetic.png)
@@ -284,6 +304,7 @@ Training writes `results/training_history.json` and saves the best EMA checkpoin
 ```bash
 uv run python scripts/calibrate.py --n 100 --seed 1234
 uv run python scripts/evaluate.py --n 100
+uv run python scripts/evaluate_online.py --cohort both --out results/online_evaluation.json
 uv run python scripts/make_figures.py
 ```
 
@@ -346,6 +367,7 @@ uv run ruff check src scripts tests
 │   ├── models/flow.py            # NeoFlow, EMA, flow loss, sampler
 │   ├── simulator/
 │   │   ├── priors.py             # literature-derived probabilities, timings and effects
+│   │   ├── calibration.py        # online patient-specific quantile calibration
 │   │   ├── events.py             # coupled spontaneous/care events and medication rules
 │   │   ├── physiology.py         # response kernels, event enforcement, temperature
 │   │   └── engine.py             # generation, signal-driven closed loop, scoring, exports
@@ -353,11 +375,11 @@ uv run ruff check src scripts tests
 │   ├── cli.py                    # neosim simulate | serve | info
 │   └── api/app.py                # FastAPI application
 ├── web/                          # offline dashboard (HTML/CSS/JS/ECharts)
-├── scripts/                      # download, train, calibrate, evaluate, figures
+├── scripts/                      # download, train, calibrate, evaluate, online evaluation, figures
 ├── tests/                        # event, flow, engine, API and metric tests
 ├── data/legacy/                  # original 8-hour CSVs
 ├── docs/                         # clinical evidence table, PreMo README and licence
-├── results/                      # evaluation, training history, figures
+├── results/                      # evaluation, online evaluation, training history, figures
 ├── models/neosim_flow.pt         # trained checkpoint
 └── models/baseline_calibration.json  # validation-fitted baseline calibration
 ```
@@ -375,7 +397,8 @@ uv run ruff check src scripts tests
 - **Conditioning is not causal.** The model reproduces associations in the training data; it does not establish treatment effects.
 - **One-minute resolution.** Sub-minute bradycardias cannot be represented exactly; they are enforced at the nearest monitor sample. This is a deliberate monitor-level abstraction, not a claim about the true duration of a four-second bradycardia.
 - **Calibration is validation-fitted.** The PreMo affine baseline calibration and channel-specific sampling noise are tuned on held-out validation data, not learned end-to-end by the generative model. They should be refitted for a new cohort.
-- **Residual distribution gap.** The real-vs-synthetic AUC remains around 0.87–0.88; the PICS test split contains a single infant, and cross-signal coupling remains weaker than real.
+- **Online calibration needs a warm-up.** The patient-calibrated mode requires prior real windows from the same patient; it is not a population-level indistinguishability claim. The unconditional generator remains the conservative benchmark.
+- **Residual distribution gap.** The unconditional real-vs-synthetic AUC remains around 0.87–0.88; the online patient-calibrated mode reaches 0.62–0.68. The PICS test split contains a single infant, and cross-signal coupling remains weaker than real.
 - **No raw data redistribution.** PreMo is subject to its ODC-By licence; PICS is distributed through PhysioNet. Users must follow the original dataset terms.
 - **Synthetic outputs must not be presented as real patient records.**
 

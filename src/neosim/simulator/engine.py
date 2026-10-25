@@ -260,6 +260,69 @@ class NeoSimulator:
         out[:, 2] = np.clip(out[:, 2], 30, 100)
         return out
 
+    def generate_from_arrays(
+        self,
+        static_raw: np.ndarray,
+        events: np.ndarray,
+        time_feats: np.ndarray,
+        mask: np.ndarray,
+        seed: int = 0,
+        batch_size: int = 20,
+    ) -> np.ndarray:
+        """Generate windows from pre-built static/event arrays.
+
+        This bypasses care-event scheduling and baseline calibration.  It is
+        used by the online patient-calibration evaluation, where each synthetic
+        window is generated from the same static/event context as its real
+        counterpart.
+        """
+        if self.model is None:
+            raise RuntimeError("a trained NeoFlow checkpoint is required")
+        static_raw = np.asarray(static_raw, dtype=np.float32)
+        events = np.asarray(events, dtype=np.float32)
+        time_feats = np.asarray(time_feats, dtype=np.float32)
+        mask = np.asarray(mask, dtype=np.float32)
+        n = len(static_raw)
+        if n == 0:
+            return np.empty((0, events.shape[1], len(SIGNALS)), dtype=np.float32)
+        cfg = SimulationConfig()
+        blocks: list[np.ndarray] = []
+        for start in range(0, n, batch_size):
+            stop = min(start + batch_size, n)
+            static = torch.from_numpy(
+                ((static_raw[start:stop] - self.static_mean) / self.static_std).astype(np.float32)
+            ).to(self.device)
+            event_tensor = torch.from_numpy(events[start:stop]).to(self.device)
+            time_tensor = torch.from_numpy(time_feats[start:stop]).to(self.device)
+            mask_tensor = torch.from_numpy(mask[start:stop]).to(self.device)
+            with torch.no_grad():
+                raw = sample(
+                    self.model,
+                    static,
+                    event_tensor,
+                    time_tensor,
+                    mask_tensor,
+                    steps=cfg.sampling_steps,
+                    cfg_scale=cfg.cfg_scale,
+                    seed=seed + start,
+                    noise_phi_channels=(
+                        cfg.noise_phi_hr if cfg.noise_phi_hr is not None else cfg.noise_phi,
+                        cfg.noise_phi_rr if cfg.noise_phi_rr is not None else cfg.noise_phi,
+                        cfg.noise_phi_spo2 if cfg.noise_phi_spo2 is not None else cfg.noise_phi,
+                    ),
+                    noise_scale_channels=(
+                        cfg.noise_scale_hr if cfg.noise_scale_hr is not None else cfg.noise_scale,
+                        cfg.noise_scale_rr if cfg.noise_scale_rr is not None else cfg.noise_scale,
+                        cfg.noise_scale_spo2 if cfg.noise_scale_spo2 is not None else cfg.noise_scale,
+                    ),
+                ).cpu().numpy()
+            raw = raw * self.channel_std + self.channel_mean
+            raw[:, :, 0] = np.clip(raw[:, :, 0], 40, 250)
+            raw[:, :, 1] = np.clip(raw[:, :, 1], 0, 120)
+            raw[:, :, 2] = np.clip(raw[:, :, 2], 30, 100)
+            blocks.append(raw.astype(np.float32))
+        return np.concatenate(blocks)
+
     # ------------------------------------------------------------------
     def _generate_neural(
         self,
