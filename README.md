@@ -20,6 +20,7 @@ The output remains compatible with the original simulator's JSON schema, so exis
 | Clinical coupling | Independent event list | Apnoea→desaturation/bradycardia, care-induced events, medication interactions, signal-driven rescue |
 | Temporal consistency | Independent signal generators | One joint sequence model with channel masking and prefix inpainting |
 | Uncertainty | Per-GAN noise | Stochastic flow sampling with calibrated correlated noise |
+| Patient-specific adaptation | None | Optional online warm-up calibration for HR/RR/SpO₂ |
 | Interface | Flask + Plotly GUI | FastAPI + offline ECharts dashboard, CLI, JSON API |
 | Exports | Legacy patient JSON | Legacy JSON, CSV bundle, FHIR R4 collection bundle, JSON API |
 | Shift length | Fixed 8-hour workflow | 1–48 hours, configurable resolution and care interventions |
@@ -40,6 +41,8 @@ The pipeline has five stages:
 3. **NeoFlow** — A six-layer transformer learns a conditional velocity field for rectified flow. Static context and event flags are injected through adaptive layer normalization; observed prefixes are passed as clean context tokens for rolling generation.
 4. **Event and care engine** — A coupled scheduler links apnoea to desaturation/bradycardia, lets feeding, handling and suction trigger events, applies medication interactions, and runs a signal-driven closed-loop rescue layer. Response kernels, event enforcement, thermoregulation and monitor noise make the output clinically controllable and consistent.
 5. **Outputs** — A dashboard, CLI and API expose the same simulation result as legacy JSON, CSV, FHIR or in-memory arrays.
+
+The architecture figure shows the unconditional generation path. An optional online calibration layer sits outside the default simulation pipeline for patient-specific deployment; it uses a short warm-up record and is evaluated separately in [Online patient-calibrated mode](#online-patient-calibrated-mode).
 
 ### Why flow matching?
 
@@ -178,9 +181,9 @@ The dashboard supports synchronized vitals, event bands, a clinical timeline, in
 | Validation | 5,683 PreMo + 64 PICS windows |
 | Held-out test | 6,171 PreMo + 64 PICS windows |
 | Optimizer | AdamW, cosine schedule, 500-step warmup, EMA 0.999 |
-| Batch / epochs | 256 / 40 (14,640 steps) |
-| Hardware | NVIDIA RTX 3080 Ti, 699 s wall-clock |
-| Best validation loss | 0.4751 at epoch 29 |
+| Batch / epochs | 256; 40 base epochs plus short structure-aware fine-tuning |
+| Hardware | NVIDIA RTX 3080 Ti; 699 s base training |
+| Best validation loss | 0.4722 (fine-tuned release; base model 0.4751 at epoch 29) |
 | Checkpoint | `models/neosim_flow.pt` |
 
 ### Intended use
@@ -211,9 +214,9 @@ Training used the held-out split protocol described in `src/neosim/data/preproce
 
 ![Training curve](results/figures/training_curve.png)
 
-### Held-out metrics
+### Unconditional held-out metrics
 
-Synthetic cohorts were generated with the simulator for 100 two-hour shifts per dataset. Care-event and closed-loop effects were disabled for this evaluation so the reported numbers isolate the generative model and the spontaneous-event coupling. The metrics compare marginal distributions, autocorrelation, event rates, a real-vs-synthetic classifier and nearest-neighbour distance.
+Synthetic cohorts were generated without patient warm-up for 100 two-hour shifts per dataset. Care-event and closed-loop effects were disabled so the reported numbers isolate the generative model and the spontaneous-event coupling. The metrics compare marginal distributions, autocorrelation, event rates, a real-vs-synthetic classifier and nearest-neighbour distance.
 
 | Cohort | Channel | Real mean ± SD | NeoSim mean ± SD | KS ↓ | Wasserstein ↓ | ACF(1) real / synth |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -320,7 +323,7 @@ uv run python scripts/evaluate_online.py --cohort both --out results/online_eval
 uv run python scripts/make_figures.py
 ```
 
-The calibration is a PreMo-only affine correction fitted on validation windows and stored in `models/baseline_calibration.json`. PICS is not calibrated because its validation split contains one infant.
+The baseline calibration is a PreMo-only affine correction fitted on validation windows and stored in `models/baseline_calibration.json`. PICS is not baseline-calibrated because its validation split contains one infant. `evaluate_online.py` then fits the patient-specific warm-up calibration.
 
 ### 5. Test and lint
 
@@ -410,7 +413,8 @@ uv run ruff check src scripts tests
 - **One-minute resolution.** Sub-minute bradycardias cannot be represented exactly; they are enforced at the nearest monitor sample. This is a deliberate monitor-level abstraction, not a claim about the true duration of a four-second bradycardia.
 - **Calibration is validation-fitted.** The PreMo affine baseline calibration and channel-specific sampling noise are tuned on held-out validation data, not learned end-to-end by the generative model. They should be refitted for a new cohort.
 - **Online calibration needs a warm-up.** The patient-calibrated mode requires prior real windows from the same patient; it is not a population-level indistinguishability claim. The unconditional generator remains the conservative benchmark.
-- **Residual distribution gap.** The unconditional real-vs-synthetic AUC remains around 0.87–0.88; the online patient-calibrated mode reaches 0.62–0.68. The PICS test split contains a single infant, and cross-signal coupling remains weaker than real.
+- **Residual distribution gap.** The unconditional real-vs-synthetic AUC remains around 0.87–0.88; the online patient-calibrated mode reaches 0.57–0.63. The PICS test split contains a single infant, and cross-signal coupling remains weaker than real.
+- **No intervention-labelled training data.** Routine care is not labelled in PreMo/PICS, so intervention policy and causal effects are not learned. The current care layer is a literature-informed prior; learning real intervention effects requires a NICU dataset with timestamped actions, doses/routes and synchronised vitals.
 - **No raw data redistribution.** PreMo is subject to its ODC-By licence; PICS is distributed through PhysioNet. Users must follow the original dataset terms.
 - **Synthetic outputs must not be presented as real patient records.**
 
