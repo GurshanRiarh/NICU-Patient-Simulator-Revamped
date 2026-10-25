@@ -479,12 +479,17 @@ def online_summary() -> None:
         return
     baseline = json.loads(baseline_path.read_text())
     online = json.loads(online_path.read_text())["cohorts"]
-    labels, before_ks, after_ks = [], [], []
+    labels, before_ks, after_ks, after_lo, after_hi, null_ks = [], [], [], [], [], []
     for cohort, channels in (("premo", ("hr", "spo2")), ("pics", ("hr", "rr"))):
         for channel in channels:
             labels.append(f"{cohort.upper()} {channel.upper()}")
             before_ks.append(baseline[cohort][channel]["distribution"]["ks"])
-            after_ks.append(online[cohort][channel]["distribution"]["ks"])
+            after = float(online[cohort][channel]["distribution"]["ks"])
+            boot = online[cohort][channel]["distribution"].get("ks_bootstrap", {})
+            after_ks.append(after)
+            after_lo.append(min(after, float(boot.get("ci95_low", after))))
+            after_hi.append(max(after, float(boot.get("ci95_high", after))))
+            null_ks.append(float(online[cohort]["null_ks"][channel]["mean"]))
     before_auc = [baseline[c]["discriminative_auc"]["auc"] for c in ("premo", "pics")]
     after_auc = [online[c]["discriminative_auc"]["auc"] for c in ("premo", "pics")]
     x = np.arange(len(labels))
@@ -492,10 +497,22 @@ def online_summary() -> None:
     width = 0.36
     ax1.bar(x - width / 2, before_ks, width, label="Before", color=PINK, alpha=0.8)
     ax1.bar(x + width / 2, after_ks, width, label="Online calibrated", color=CYAN, alpha=0.85)
+    ax1.errorbar(
+        x + width / 2,
+        after_ks,
+        yerr=[np.array(after_ks) - np.array(after_lo), np.array(after_hi) - np.array(after_ks)],
+        fmt="none",
+        ecolor=BLUE,
+        elinewidth=1,
+        capsize=2,
+        label="Bootstrap CI",
+    )
+    ax1.scatter(x + width / 2, null_ks, marker="D", color=AMBER, s=16, label="Real-half null")
     ax1.axhline(0.05, color=AMBER, linestyle="--", linewidth=1, label="5% target")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, rotation=20, ha="right")
     ax1.set_ylabel("KS distance")
+    ax1.set_ylim(0, max(max(before_ks), max(after_hi)) * 1.18)
     ax1.set_title("Per-channel distribution error")
     ax1.legend(frameon=False, fontsize=8)
     _clean(ax1)

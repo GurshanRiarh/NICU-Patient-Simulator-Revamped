@@ -50,7 +50,7 @@ COHORT_SETTINGS = {
         "cross_factor": 1.3,
         "acf_noise_scale": 0.75,
         "rank_channels": (1,),
-        "rank_stats_scale": 0.72,
+        "rank_stats_scale": 1.2,
         "spo2_shift": 0.0,
     },
 }
@@ -182,9 +182,13 @@ def _print_cohort(cohort: str, metrics: dict) -> None:
         if channel in metrics and "distribution" in metrics[channel]:
             dist = metrics[channel]["distribution"]
             acf = metrics[channel]["autocorrelation"]
+            boot = dist.get("ks_bootstrap", {})
+            null = metrics.get("null_ks", {}).get(channel, {})
             print(
-                f"  {channel}: KS={dist['ks']:.3f} W={dist['wasserstein']:.2f} "
-                f"mean {dist['synth_mean']:.1f}/{dist['real_mean']:.1f} "
+                f"  {channel}: KS={dist['ks']:.3f} "
+                f"[{boot.get('ci95_low', float('nan')):.3f}, {boot.get('ci95_high', float('nan')):.3f}] "
+                f"null={null.get('mean', float('nan')):.3f} "
+                f"W={dist['wasserstein']:.2f} mean {dist['synth_mean']:.1f}/{dist['real_mean']:.1f} "
                 f"std {dist['synth_std']:.1f}/{dist['real_std']:.1f} "
                 f"ACF {acf['synth']['acf_1']:.3f}/{acf['real']['acf_1']:.3f}"
             )

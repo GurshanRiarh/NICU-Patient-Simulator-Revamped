@@ -19,3 +19,7 @@ def test_evaluate_pair_returns_expected_sections():
     assert 0 <= report["discriminative_auc"]["auc"] <= 1
     assert np.isfinite(report["distance_to_closest"]["dcr_mean"])
     assert "real" in report["bradycardia"]
+    assert "ks_bootstrap" in report["hr"]["distribution"]
+    assert np.isfinite(report["hr"]["distribution"]["ks_bootstrap"]["ci95_low"])
+    assert "null_ks" in report
+    assert 0.0 <= report["null_ks"]["hr"]["mean"] <= 1.0

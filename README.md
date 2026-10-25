@@ -239,15 +239,26 @@ The population-level numbers above do not use patient history. For deployment wi
 | --- | --- | ---: | ---: | ---: | ---: |
 | PreMo | HR | 0.029 | **0.009** | 0.869 | **0.625** |
 | PreMo | SpO₂ | 0.125 | **0.043** | 0.869 | **0.625** |
-| PICS | HR | 0.268 | **0.026** | 0.879 | **0.579** |
-| PICS | RR | 0.256 | **0.048** | 0.879 | **0.579** |
+| PICS | HR | 0.268 | **0.026** | 0.879 | **0.566** |
+| PICS | RR | 0.256 | **0.045** | 0.879 | **0.566** |
 
 The online evaluation used 960 PreMo windows from 120 patients and 60 PICS windows from the single test infant. After calibration:
 
-- Maximum relative mean error: **0.46%**; maximum relative SD error: **4.90%**; maximum KS: **4.80%**.
+- Maximum relative mean error: **0.30%**; maximum relative SD error: **0.61%**; maximum KS: **4.50%**.
 - PreMo HR `159.7 / 159.6` bpm, SD `13.5 / 13.5`, ACF `0.877 / 0.855`; SpO₂ `95.2 / 95.1%`, SD `5.1 / 5.1`, ACF `0.846 / 0.813`; bradycardia `0.012 vs 0.008` min/h; desaturation `2.59 vs 2.56` min/h.
-- PICS HR `155.8 / 155.9` bpm, SD `11.1 / 11.2`, ACF `0.827 / 0.825`; RR `40.9 / 40.7` breaths/min, SD `5.0 / 5.2`, ACF `0.679 / 0.662`; bradycardia `0.0 vs 0.0` min/h.
+- PICS HR `155.8 / 155.9` bpm, SD `11.1 / 11.2`, ACF `0.827 / 0.825`; RR `40.8 / 40.7` breaths/min, SD `5.3 / 5.2`, ACF `0.679 / 0.662`; bradycardia `0.0 vs 0.0` min/h.
 - Cross-signal correlation: PreMo HR–SpO₂ `−0.032 vs −0.061`; PICS HR–RR `−0.413 vs −0.382`.
+
+Window-level bootstrap CIs and the real-half null KS are reported in `results/online_evaluation.json`. The null KS is the KS between two random halves of the real cohort; it is the finite-sample noise floor.
+
+| Cohort | Channel | KS (bootstrap 95% CI) | Real-half null |
+| --- | --- | ---: | ---: |
+| PreMo | HR | 0.009 (0.010–0.044) | 0.027 |
+| PreMo | SpO₂ | 0.043 (0.029–0.060) | 0.029 |
+| PICS | HR | 0.026 (0.032–0.123) | 0.070 |
+| PICS | RR | 0.045 (0.051–0.111) | 0.045 |
+
+PICS RR is at the real-half noise floor and PICS HR is below it. This is why a sub-1% KS target would be measuring sampling noise rather than a real distributional improvement.
 
 This is a patient-specific warm-up protocol, not a population-level indistinguishability claim. The unconditional generator remains the more conservative benchmark. The reusable calibrator is in `src/neosim/simulator/calibration.py`; the full warm-up loop is in `scripts/evaluate_online.py`.
 

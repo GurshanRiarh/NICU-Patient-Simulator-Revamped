@@ -63,6 +63,69 @@ def distribution_metrics(real: np.ndarray, synth: np.ndarray) -> dict[str, float
     }
 
 
+def _masked_values(window_set: WindowSet, channel: int, indices: np.ndarray) -> np.ndarray:
+    values = window_set.x[indices, :, channel]
+    mask = window_set.mask[indices, :, channel] > 0
+    return values[mask].astype(np.float64)
+
+
+def null_ks(window_set: WindowSet, channel: int, n_splits: int = 200, seed: int = 0) -> dict[str, float]:
+    """KS between random halves of the same real cohort.
+
+    This is the finite-sample noise floor: a synthetic KS at or below this value
+    is indistinguishable from comparing two real halves.
+    """
+    n = len(window_set.x)
+    if n < 4:
+        return {"mean": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan"), "n_splits": 0.0}
+    rng = np.random.default_rng(seed)
+    stats = []
+    for _ in range(n_splits):
+        perm = rng.permutation(n)
+        half = n // 2
+        a = _masked_values(window_set, channel, perm[:half])
+        b = _masked_values(window_set, channel, perm[half:])
+        if len(a) > 1 and len(b) > 1:
+            stats.append(float(ks_2samp(a, b).statistic))
+    if not stats:
+        return {"mean": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan"), "n_splits": 0.0}
+    return {
+        "mean": float(np.mean(stats)),
+        "ci95_low": float(np.quantile(stats, 0.025)),
+        "ci95_high": float(np.quantile(stats, 0.975)),
+        "n_splits": float(len(stats)),
+    }
+
+
+def bootstrap_ks(
+    real: WindowSet,
+    synth: WindowSet,
+    channel: int,
+    n_boot: int = 200,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Window-level bootstrap confidence interval for the observed KS."""
+    if len(real.x) < 2 or len(synth.x) < 2:
+        return {"mean": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan"), "n_boot": 0.0}
+    rng = np.random.default_rng(seed + 1000)
+    stats = []
+    for _ in range(n_boot):
+        ri = rng.integers(0, len(real.x), len(real.x))
+        si = rng.integers(0, len(synth.x), len(synth.x))
+        a = _masked_values(real, channel, ri)
+        b = _masked_values(synth, channel, si)
+        if len(a) > 1 and len(b) > 1:
+            stats.append(float(ks_2samp(a, b).statistic))
+    if not stats:
+        return {"mean": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan"), "n_boot": 0.0}
+    return {
+        "mean": float(np.mean(stats)),
+        "ci95_low": float(np.quantile(stats, 0.025)),
+        "ci95_high": float(np.quantile(stats, 0.975)),
+        "n_boot": float(len(stats)),
+    }
+
+
 def _acf(window: np.ndarray, lag: int) -> float:
     x = window - window.mean()
     denom = float(np.dot(x, x))
@@ -235,8 +298,10 @@ def evaluate_pair(
         name = CHANNELS[c]
         rv = real.values(c)
         sv = synth.values(c)
+        distribution = distribution_metrics(rv, sv)
+        distribution["ks_bootstrap"] = bootstrap_ks(real, synth, c)
         out[name] = {
-            "distribution": distribution_metrics(rv, sv),
+            "distribution": distribution,
             "autocorrelation": {
                 "real": autocorrelation(real.windows(c)),
                 "synth": autocorrelation(synth.windows(c)),
@@ -256,6 +321,9 @@ def evaluate_pair(
             "real": event_rates(real, 2, 85.0, "below"),
             "synth": event_rates(synth, 2, 85.0, "below"),
         }
+    out["null_ks"] = {
+        CHANNELS[c]: null_ks(real, c) for c in available_channels
+    }
     out["discriminative_auc"] = discriminative_auc(real, synth, available_channels)
     out["distance_to_closest"] = distance_to_closest(
         real, synth, tuple(c for c in (0, 2) if c in available_channels) or available_channels
