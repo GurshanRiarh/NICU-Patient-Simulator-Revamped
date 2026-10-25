@@ -472,6 +472,51 @@ def evaluation_summary() -> None:
     plt.close(fig)
 
 
+def online_summary() -> None:
+    baseline_path = RESULTS_DIR / "evaluation.json"
+    online_path = RESULTS_DIR / "online_evaluation.json"
+    if not baseline_path.exists() or not online_path.exists():
+        return
+    baseline = json.loads(baseline_path.read_text())
+    online = json.loads(online_path.read_text())["cohorts"]
+    labels, before_ks, after_ks = [], [], []
+    for cohort, channels in (("premo", ("hr", "spo2")), ("pics", ("hr", "rr"))):
+        for channel in channels:
+            labels.append(f"{cohort.upper()} {channel.upper()}")
+            before_ks.append(baseline[cohort][channel]["distribution"]["ks"])
+            after_ks.append(online[cohort][channel]["distribution"]["ks"])
+    before_auc = [baseline[c]["discriminative_auc"]["auc"] for c in ("premo", "pics")]
+    after_auc = [online[c]["discriminative_auc"]["auc"] for c in ("premo", "pics")]
+    x = np.arange(len(labels))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.5, 3.3), gridspec_kw={"width_ratios": [2.2, 1]})
+    width = 0.36
+    ax1.bar(x - width / 2, before_ks, width, label="Before", color=PINK, alpha=0.8)
+    ax1.bar(x + width / 2, after_ks, width, label="Online calibrated", color=CYAN, alpha=0.85)
+    ax1.axhline(0.05, color=AMBER, linestyle="--", linewidth=1, label="5% target")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, rotation=20, ha="right")
+    ax1.set_ylabel("KS distance")
+    ax1.set_title("Per-channel distribution error")
+    ax1.legend(frameon=False, fontsize=8)
+    _clean(ax1)
+    names = ["PreMo", "PICS"]
+    x2 = np.arange(len(names))
+    ax2.bar(x2 - width / 2, before_auc, width, label="Before", color=PINK, alpha=0.8)
+    ax2.bar(x2 + width / 2, after_auc, width, label="Online calibrated", color=CYAN, alpha=0.85)
+    ax2.axhline(0.5, color=MUTED, linestyle="--", linewidth=1)
+    ax2.axhline(0.7, color=AMBER, linestyle="--", linewidth=1, label="Upper target")
+    ax2.set_xticks(x2)
+    ax2.set_xticklabels(names)
+    ax2.set_ylim(0, 1)
+    ax2.set_ylabel("AUC")
+    ax2.set_title("Classifier separability")
+    ax2.legend(frameon=False, fontsize=8)
+    _clean(ax2)
+    fig.suptitle("Online patient calibration", color=TEXT, fontweight="bold", y=1.03)
+    fig.savefig(FIGURES_DIR / "online_calibration.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     architecture()
@@ -490,6 +535,8 @@ def main() -> None:
     print("regimes")
     evaluation_summary()
     print("evaluation")
+    online_summary()
+    print("online_calibration")
     print(f"figures -> {FIGURES_DIR}")
 
 

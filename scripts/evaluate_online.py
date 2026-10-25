@@ -35,8 +35,8 @@ COHORT_SETTINGS = {
     },
     "pics": {
         "channels": (0, 1),
-        "calibration_windows": 5,
-        "stats_window": 0,
+        "calibration_windows": 4,
+        "stats_window": 120,
         "max_patients": None,
         "windows_per_patient": None,
         "per_window_seed": True,
@@ -127,6 +127,24 @@ def evaluate_cohort(
     metrics["n_patients"] = len(chunks)
     metrics["calibration_windows"] = cal_n
     metrics["stats_window"] = stats_window
+
+    summary: dict = {"channels": {}, "max_mean_rel_error_pct": 0.0, "max_std_rel_error_pct": 0.0, "max_ks": 0.0}
+    for channel in ("hr", "rr", "spo2"):
+        if channel not in metrics or "distribution" not in metrics[channel]:
+            continue
+        dist = metrics[channel]["distribution"]
+        mean_error = abs(dist["synth_mean"] - dist["real_mean"]) / max(abs(dist["real_mean"]), 1e-6) * 100.0
+        std_error = abs(dist["synth_std"] - dist["real_std"]) / max(abs(dist["real_std"]), 1e-6) * 100.0
+        ks = dist["ks"]
+        summary["channels"][channel] = {
+            "mean_rel_error_pct": mean_error,
+            "std_rel_error_pct": std_error,
+            "ks": ks,
+        }
+        summary["max_mean_rel_error_pct"] = max(summary["max_mean_rel_error_pct"], mean_error)
+        summary["max_std_rel_error_pct"] = max(summary["max_std_rel_error_pct"], std_error)
+        summary["max_ks"] = max(summary["max_ks"], ks)
+    metrics["summary"] = summary
     return metrics
 
 

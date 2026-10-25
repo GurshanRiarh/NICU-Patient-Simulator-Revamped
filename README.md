@@ -233,24 +233,26 @@ The cross-signal fit remains conservative: PreMo HR–SpO₂ peak correlation is
 
 ### Online patient-calibrated mode
 
-The population-level numbers above do not use patient history. For deployment with a warm-up record, the simulator also supports online patient calibration. The first 5–6 windows from a patient are used to fit per-channel quantile maps from synthetic to real prior windows; PreMo also matches the mean and SD of the last 90 minutes of the preceding window. No current or future vitals are used.
+The population-level numbers above do not use patient history. For deployment with a warm-up record, the simulator also supports online patient calibration. The first 4–6 windows from a patient are used to fit per-channel quantile maps from synthetic to real prior windows; PreMo also matches the mean and SD of the last 90 minutes of the preceding window. No current or future vitals are used.
 
 | Cohort | Channel | KS before | KS after | AUC before | AUC after |
 | --- | --- | ---: | ---: | ---: | ---: |
 | PreMo | HR | 0.029 | **0.016** | 0.869 | **0.616** |
 | PreMo | SpO₂ | 0.125 | **0.042** | 0.869 | **0.616** |
-| PICS | HR | 0.268 | **0.026** | 0.879 | **0.678** |
-| PICS | RR | 0.256 | **0.044** | 0.879 | **0.678** |
+| PICS | HR | 0.268 | **0.033** | 0.879 | **0.645** |
+| PICS | RR | 0.256 | **0.047** | 0.879 | **0.645** |
 
-The online evaluation used 720 PreMo windows from 120 patients and 59 PICS windows from the single test infant. After calibration:
+The online evaluation used 720 PreMo windows from 120 patients and 60 PICS windows from the single test infant. After calibration:
 
+- Maximum relative mean error: **0.36%**; maximum relative SD error: **1.93%**; maximum KS: **4.74%**.
 - PreMo HR `159.6 / 159.4` bpm, SD `13.4 / 13.7`; SpO₂ `95.1 / 95.2%`, SD `5.0 / 4.9`; bradycardia `0.008 vs 0.011` min/h; desaturation `2.55 vs 2.42` min/h.
-- PICS HR `155.7 / 155.9` bpm, SD `11.8 / 11.2`; RR `41.1 / 40.6` breaths/min, SD `5.5 / 5.2`; bradycardia `0.0 vs 0.0` min/h.
-- Cross-signal correlation is still conservative: PreMo HR–SpO₂ `−0.099 vs −0.039`; PICS HR–RR `−0.131 vs −0.383`.
-- PICS RR remains smoother than real (`ACF(1) 0.805 vs 0.664`).
+- PICS HR `155.8 / 155.9` bpm, SD `11.1 / 11.2`; RR `40.9 / 40.7` breaths/min, SD `5.1 / 5.2`; bradycardia `0.0 vs 0.0` min/h.
+- Cross-signal correlation is still conservative: PreMo HR–SpO₂ `−0.099 vs −0.039`; PICS HR–RR `−0.129 vs −0.382`.
+- PICS RR remains smoother than real (`ACF(1) 0.804 vs 0.662`).
 
 This is a patient-specific warm-up protocol, not a population-level indistinguishability claim. The unconditional generator remains the more conservative benchmark. The reusable calibrator is in `src/neosim/simulator/calibration.py`; the full warm-up loop is in `scripts/evaluate_online.py`.
 
+![Online patient calibration](results/figures/online_calibration.png)
 ![Held-out distributions](results/figures/distributions.png)
 ![Evaluation summary](results/figures/evaluation.png)
 ![Real versus synthetic windows](results/figures/real_vs_synthetic.png)
