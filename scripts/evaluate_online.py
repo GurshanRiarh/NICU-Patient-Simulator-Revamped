@@ -243,7 +243,7 @@ def main() -> None:
         _print_cohort(cohort, metrics)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(report, indent=2))
+    args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nwrote {args.out}")
 
 

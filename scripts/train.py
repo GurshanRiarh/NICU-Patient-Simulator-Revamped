@@ -236,7 +236,9 @@ def main() -> None:
     history["best_val"] = best_val
     history["params"] = n_params
     history["training_seconds"] = time.time() - t0
-    (RESULTS_DIR / "training_history.json").write_text(json.dumps(history, indent=2))
+    (RESULTS_DIR / "training_history.json").write_text(
+        json.dumps(history, indent=2), encoding="utf-8"
+    )
     print(f"done in {time.time() - t0:.0f}s; best val={best_val:.4f}")
 
 

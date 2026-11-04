@@ -412,7 +412,7 @@ _PICS_META = {
 
 
 def _parse_header(path: Path) -> tuple[float, int]:
-    line = path.read_text().splitlines()[0].split()
+    line = path.read_text(encoding="utf-8").splitlines()[0].split()
     return float(line[2]), int(line[3])
 
 
@@ -452,7 +452,7 @@ def process_pics_infant(infant: int) -> dict[str, np.ndarray] | None:
     ecg_hea = root / f"infant{infant}_ecg.hea"
     fs_ecg, n_ecg = _parse_header(ecg_hea)
     _, n_resp = _parse_header(root / f"infant{infant}_resp.hea")
-    fs_resp_line = (root / f"infant{infant}_resp.hea").read_text().splitlines()[0].split()
+    fs_resp_line = (root / f"infant{infant}_resp.hea").read_text(encoding="utf-8").splitlines()[0].split()
     fs_resp = float(fs_resp_line[2])
 
     try:
@@ -624,7 +624,7 @@ def compute_norm_stats() -> dict:
     }
     stats = {"channels": channel_stats, "static": static_stats, "n_windows": int(len(xs))}
     path = PROCESSED_DIR / "norm_stats.json"
-    path.write_text(json.dumps(stats, indent=2))
+    path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
     print(f"Saved {path}")
     return stats
 

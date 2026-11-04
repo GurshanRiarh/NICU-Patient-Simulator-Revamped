@@ -71,7 +71,9 @@ The pipeline order is: generate NeoFlow vitals → apply scheduled care kernels 
 
 ## Quick start
 
-Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/), and optionally a CUDA GPU. The repository includes the trained checkpoint `models/neosim_flow.pt`; CPU inference works, but is slower.
+NeoSim runs natively on **Linux** and **Windows**. Requirements: Python 3.12 or 3.13, [`uv`](https://docs.astral.sh/uv/), and optionally an NVIDIA GPU with a CUDA-enabled PyTorch build. `uv` can download a compatible Python interpreter for you. The repository includes the trained checkpoint `models/neosim_flow.pt`; CPU inference works on both platforms, but is slower.
+
+### Linux
 
 ```bash
 git clone https://github.com/GurshanRiarh/NICU-Patient-Simulator-Revamped.git
@@ -82,11 +84,40 @@ uv run neosim info
 uv run neosim serve --host 127.0.0.1 --port 8010
 ```
 
-Open <http://127.0.0.1:8010>. Port 8000 is intentionally not assumed because it is commonly occupied by other local services.
+### Windows (PowerShell)
 
-If the checkpoint is missing, the simulator falls back to a physiology-only generator and prints a warning. Normalisation statistics are included in `data/processed/norm_stats.json`, so the fallback and API can still run.
+Install `uv` once if it is not already available, then run the same `uv` workflow. Windows Terminal, PowerShell 5.1+ and PowerShell 7+ are all supported.
+
+```powershell
+winget install --id=astral-sh.uv -e
+
+# If winget is unavailable, use the official installer instead:
+# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+git clone https://github.com/GurshanRiarh/NICU-Patient-Simulator-Revamped.git
+cd NICU-Patient-Simulator-Revamped
+
+uv sync --extra dev
+uv run neosim info
+uv run neosim serve --host 127.0.0.1 --port 8010
+```
+
+Reopen the terminal if `uv` is not found immediately after installation.
+
+Open <http://127.0.0.1:8010> in either case. Port 8000 is intentionally not assumed because it is commonly occupied by other local services.
+
+The first `uv sync` downloads PyTorch and the rest of the dependency stack, so it needs an internet connection and may take a few minutes. If the checkpoint is missing, the simulator falls back to a physiology-only generator and prints a warning. Normalisation statistics are included in `data/processed/norm_stats.json`, so the fallback and API can still run.
+
+Windows notes:
+
+- Use `curl.exe` rather than `curl` in PowerShell; `curl` is an alias for `Invoke-WebRequest` and does not accept the same flags.
+- If you bind to `--host 0.0.0.0` so other machines on your network can connect, allow Python through Windows Defender Firewall for private networks.
+- The default Windows PyTorch wheel is CPU-only. CPU simulation works out of the box; for GPU acceleration, install a CUDA-enabled PyTorch build from <https://pytorch.org/get-started/locally/> and check it with `uv run neosim info`.
+- Training requires CUDA and a CUDA-enabled PyTorch build; serving and generating shifts do not.
 
 ### Run the dashboard as a service
+
+#### Linux (systemd)
 
 On Linux, install the bundled systemd user unit so the dashboard starts automatically at login:
 
@@ -108,6 +139,28 @@ systemctl --user disable --now neosim-dashboard
 rm ~/.config/systemd/user/neosim-dashboard.service
 systemctl --user daemon-reload
 ```
+
+#### Windows (Task Scheduler)
+
+To start the dashboard automatically when you log in, run the following from the repository root in PowerShell after `uv sync`:
+
+```powershell
+$ProjectDir = (Get-Location).Path
+$Action = New-ScheduledTaskAction -Execute "$ProjectDir\.venv\Scripts\neosim.exe" -Argument "serve --host 127.0.0.1 --port 8010" -WorkingDirectory $ProjectDir
+$Trigger = New-ScheduledTaskTrigger -AtLogOn
+$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName "NeoSim Dashboard" -Action $Action -Trigger $Trigger -Settings $Settings -Description "NeoSim NICU patient simulator dashboard"
+Start-ScheduledTask -TaskName "NeoSim Dashboard"
+```
+
+Inspect or remove the task with:
+
+```powershell
+Get-ScheduledTask -TaskName "NeoSim Dashboard"
+Unregister-ScheduledTask -TaskName "NeoSim Dashboard" -Confirm:$false
+```
+
+The task runs while your user is logged in. For a headless or shared Windows machine, run the dashboard under a service wrapper such as [NSSM](https://nssm.cc/) or use Windows Server service accounts.
 
 ### Generate a shift from the CLI
 
@@ -133,7 +186,7 @@ outputs/rds_demo/
 └── fhir_bundle.json
 ```
 
-Use `--seed` for reproducibility, `--interventions` to restrict routine care, or `--no-care-events` / `--no-closed-loop` to isolate the generator.
+Use `--seed` for reproducibility, `--interventions` to restrict routine care, or `--no-care-events` / `--no-closed-loop` to isolate the generator. The example is split across lines with bash's `\` continuation; in Windows PowerShell, put it on one line or use a backtick (`` ` ``) at the end of each line.
 
 ### JSON API
 
@@ -151,6 +204,24 @@ curl -s http://127.0.0.1:8010/api/simulate \
     "interval_minutes": 5,
     "seed": 42
   }'
+```
+
+Windows PowerShell uses `curl.exe` for the same syntax, or `Invoke-RestMethod`:
+
+```powershell
+$body = @{
+  patient_id = "API-001"
+  gestational_age_weeks = 28
+  birth_weight_g = 1050
+  postnatal_age_days = 21
+  condition = "apnea_of_prematurity"
+  severity = 0.55
+  shift_hours = 8
+  interval_minutes = 5
+  seed = 42
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8010/api/simulate" -Method Post -ContentType "application/json" -Body $body
 ```
 
 Useful endpoints:
@@ -312,7 +383,7 @@ uv run python scripts/train.py \
   --out models/neosim_flow.pt
 ```
 
-Training writes `results/training_history.json` and saves the best EMA checkpoint. It took 699 seconds on an RTX 3080 Ti. The released checkpoint also includes a short structure-aware fine-tune (`--aux-moment`, `--aux-acf`, `--aux-corr`) that improves temporal and cross-channel statistics.
+Training writes `results/training_history.json` and saves the best EMA checkpoint. It took 699 seconds on an RTX 3080 Ti. The released checkpoint also includes a short structure-aware fine-tune (`--aux-moment`, `--aux-acf`, `--aux-corr`) that improves temporal and cross-channel statistics. On Windows PowerShell, put the training command on one line or replace the `\` continuations with backticks.
 
 ### 4. Calibrate, evaluate and regenerate figures
 

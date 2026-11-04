@@ -62,7 +62,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     if "json" in formats:
         payload = sim.to_legacy_json(result)
-        (out_dir / "simulation.json").write_text(json.dumps(payload, indent=2))
+        (out_dir / "simulation.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if "csv" in formats:
         (out_dir / "dashboard.json").write_text(
             json.dumps(
@@ -77,11 +77,14 @@ def cmd_simulate(args: argparse.Namespace) -> int:
                     "sepsis_risk": result.sepsis_risk.tolist(),
                 },
                 indent=2,
-            )
+            ),
+            encoding="utf-8",
         )
         sim.to_csv(result, out_dir)
     if "fhir" in formats:
-        (out_dir / "fhir_bundle.json").write_text(json.dumps(sim.to_fhir(result), indent=2))
+        (out_dir / "fhir_bundle.json").write_text(
+            json.dumps(sim.to_fhir(result), indent=2), encoding="utf-8"
+        )
     summary = result.summary()
     if args.json:
         print(json.dumps({"summary": summary, "path": str(out_dir)}, indent=2))
@@ -128,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="run the FastAPI dashboard")
     serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--port", type=int, default=8010)
     serve.add_argument("--reload", action="store_true")
     serve.set_defaults(func=cmd_serve)
 

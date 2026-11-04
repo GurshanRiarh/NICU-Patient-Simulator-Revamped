@@ -124,7 +124,7 @@ def main() -> None:
 
     if not args.skip_save:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(report, indent=2))
+        args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         np.savez_compressed(
             RESULTS_DIR / "synthetic_eval.npz",
             premo_x=synth_premo.x,

@@ -60,7 +60,7 @@ class VitalsWindowDataset(Dataset):
 
 
 def load_norm(path: str | Path = PROCESSED_DIR / "norm_stats.json") -> dict:
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def build_datasets(norm: dict, augment: bool = True) -> tuple[ConcatDataset, ConcatDataset, list[float]]:

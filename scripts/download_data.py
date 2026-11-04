@@ -57,7 +57,7 @@ def _download(url: str, dest: Path, expected: int | None = None, retries: int = 
 
 
 def download_premo(workers: int, limit: int | None) -> None:
-    files = json.loads(PREMO_INDEX.read_text())
+    files = json.loads(PREMO_INDEX.read_text(encoding="utf-8"))
     if limit:
         files = files[:limit]
     root = RAW / "premo"

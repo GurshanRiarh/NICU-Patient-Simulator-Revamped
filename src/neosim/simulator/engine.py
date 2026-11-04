@@ -172,7 +172,7 @@ class NeoSimulator:
         else:
             print("WARNING: no NeoFlow checkpoint found; using physiology fallback.")
         if self.norm is None and NORM_FILE.exists():
-            self.norm = json.loads(NORM_FILE.read_text())
+            self.norm = json.loads(NORM_FILE.read_text(encoding="utf-8"))
         if self.norm is None:
             raise FileNotFoundError("normalisation statistics are required (run preprocessing)")
 
@@ -182,7 +182,9 @@ class NeoSimulator:
         self.static_std = np.asarray(self.norm["static"]["std"], dtype=np.float32)
         self.baseline_calibration: dict = {}
         if BASELINE_CALIBRATION_FILE.exists():
-            self.baseline_calibration = json.loads(BASELINE_CALIBRATION_FILE.read_text())
+            self.baseline_calibration = json.loads(
+                BASELINE_CALIBRATION_FILE.read_text(encoding="utf-8")
+            )
 
     # ------------------------------------------------------------------
     def simulate(self, config: SimulationConfig) -> SimulationResult:
@@ -765,7 +767,7 @@ class NeoSimulator:
         directory.mkdir(parents=True, exist_ok=True)
         paths: dict[str, Path] = {}
         vitals_path = directory / "vitals.csv"
-        with open(vitals_path, "w", newline="") as fh:
+        with open(vitals_path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(
                 [
@@ -796,7 +798,7 @@ class NeoSimulator:
         paths["vitals"] = vitals_path
 
         events_path = directory / "events.csv"
-        with open(events_path, "w", newline="") as fh:
+        with open(events_path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(["type", "label", "start_minute", "duration_minutes", "severity"])
             for event in result.events:
@@ -812,7 +814,7 @@ class NeoSimulator:
         paths["events"] = events_path
 
         interventions_path = directory / "interventions.csv"
-        with open(interventions_path, "w", newline="") as fh:
+        with open(interventions_path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(["timestamp", "minute", "type", "detail", "severity"])
             for item in result.interventions:
@@ -823,6 +825,8 @@ class NeoSimulator:
                 )
                 writer.writerow([ts, item["minute"], item["type"], item["detail"], item["severity"]])
         paths["interventions"] = interventions_path
-        (directory / "summary.json").write_text(json.dumps(result.summary(), indent=2))
+        (directory / "summary.json").write_text(
+            json.dumps(result.summary(), indent=2), encoding="utf-8"
+        )
         paths["summary"] = directory / "summary.json"
         return paths

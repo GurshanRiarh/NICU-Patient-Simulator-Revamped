@@ -69,7 +69,7 @@ def main() -> None:
                 "synth_std": synth_std,
             }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(calibration, indent=2))
+    args.out.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
     print(f"wrote {args.out}")
     for cohort in ("premo", "pics"):
         print(cohort)

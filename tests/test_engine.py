@@ -36,7 +36,7 @@ def test_fallback_simulation_and_exports(dummy_norm, tmp_path):
 
     paths = sim.to_csv(result, tmp_path)
     assert all(path.exists() for path in paths.values())
-    assert json.loads((tmp_path / "summary.json").read_text())["patient_id"] == "SIM-0001"
+    assert json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))["patient_id"] == "SIM-0001"
 
 
 def test_simulation_is_reproducible(dummy_norm):

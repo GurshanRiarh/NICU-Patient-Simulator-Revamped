@@ -201,7 +201,7 @@ def training_curve() -> None:
     path = RESULTS_DIR / "training_history.json"
     if not path.exists():
         return
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     fig, ax = plt.subplots(figsize=(7.4, 3.5))
     epochs = np.arange(1, len(data["train"]) + 1)
     ax.plot(epochs, data["train"], color=CYAN, linewidth=1.8, label="train")
@@ -364,7 +364,7 @@ def interdependence() -> None:
     eval_path = RESULTS_DIR / "evaluation.json"
     ax = axes[2]
     if eval_path.exists():
-        data = json.loads(eval_path.read_text())["premo"]
+        data = json.loads(eval_path.read_text(encoding="utf-8"))["premo"]
         real_rates = [
             data["bradycardia"]["real"]["minutes_per_hour"],
             data["desaturation"]["real"]["minutes_per_hour"],
@@ -443,7 +443,7 @@ def evaluation_summary() -> None:
     path = RESULTS_DIR / "evaluation.json"
     if not path.exists():
         return
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     labels, ks, auc = [], [], []
     for dataset in ("premo", "pics"):
         for channel, metrics in data[dataset].items():
@@ -477,8 +477,8 @@ def online_summary() -> None:
     online_path = RESULTS_DIR / "online_evaluation.json"
     if not baseline_path.exists() or not online_path.exists():
         return
-    baseline = json.loads(baseline_path.read_text())
-    online = json.loads(online_path.read_text())["cohorts"]
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    online = json.loads(online_path.read_text(encoding="utf-8"))["cohorts"]
     labels, before_ks, after_ks, after_lo, after_hi, null_ks = [], [], [], [], [], []
     for cohort, channels in (("premo", ("hr", "spo2")), ("pics", ("hr", "rr"))):
         for channel in channels:
